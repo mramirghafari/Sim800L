@@ -453,7 +453,11 @@ internal sealed class MainForm : Form
         try
         {
             var writer = new ImeiWriter(_device, (command, response) => AppendWriteLog($"  {command} → {Flatten(response)}"));
-            var progress = new Progress<string>(message => AppendWriteLog("» " + message));
+            var progress = new Progress<string>(message =>
+            {
+                if (_writeLog.TextLength == 0) _writeLog.Clear();
+                AppendWriteLog("» " + message);
+            });
 
             string current = string.Empty;
             if (_strategyPicker.SelectedIndex <= 0)
