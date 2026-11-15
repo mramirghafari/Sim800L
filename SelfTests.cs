@@ -20,6 +20,20 @@ internal static class SelfTests
             log?.Invoke($"FAIL  {name}{(detail.Length > 0 ? " — " + detail : string.Empty)}");
         }
 
+        using (var bodyFont = AppFonts.Ui(10.5f))
+        using (var headingFont = AppFonts.Ui(12f, FontStyle.Bold))
+        {
+            Check("فونت داخلی Yekan Bakh بارگذاری می‌شود",
+                AppFonts.ActiveFamilyName.Contains("Yekan Bakh", StringComparison.OrdinalIgnoreCase),
+                AppFonts.ActiveFamilyName);
+            var actualGdiFace = AppFonts.GetActualGdiFaceName(bodyFont);
+            Check("فونت Yekan Bakh واقعاً در GDI ویندوز انتخاب می‌شود",
+                AppFonts.IsRegisteredWithGdi &&
+                actualGdiFace.Contains("Yekan Bakh", StringComparison.OrdinalIgnoreCase),
+                $"family={AppFonts.ActiveFamilyName}; GDI={actualGdiFace}; registered={AppFonts.IsRegisteredWithGdi}");
+            Check("وزن بدنه سبک و تیتر بولد است", !bodyFont.Bold && headingFont.Bold);
+        }
+
         // --- اعتبارسنجی IMEI -------------------------------------------------
         Check("IMEI معتبر شناخته می‌شود",
             ImeiNumber.TryParse("490154203237518", out var imei1, out _) && imei1!.Tac == "49015420");
@@ -62,7 +76,8 @@ internal static class SelfTests
 
         var full = noConsent with { ConsentGiven = true };
         Check("پس از تکمیل شرایط، «عدم پشتیبانی IMEI» گزارش می‌شود",
-            full.Evaluate().Any(i => i.Kind == PlanIssueKind.Unsupported && i.Message.Contains("OTROMA")));
+            full.Evaluate().Any(i => i.Kind == PlanIssueKind.Unsupported &&
+                i.Message.Contains("از مسیر فلش firmware انجام نمی‌شود")));
 
         Check("نوشتن IMEI باعث مسدود شدن فلش مجاز firmware نمی‌شود",
             !full.HasBlockers);
@@ -91,6 +106,32 @@ internal static class SelfTests
 
         Check("نکات ایمنی شامل ممنوعیت تغییر PIN است",
             SimCardProfile.SafetyNotes().Any(n => n.Contains("PIN")));
+
+        // --- اپراتور و شماره سیم‌کارت --------------------------------------
+        Check("کد 43235 به نام ایرانسل تبدیل می‌شود",
+            Sim800Device.ResolveOperatorName(
+                "+COPS: 0,0,\"MTN Irancell\"", "+COPS: 0,2,\"43235\"", string.Empty, "432350466774037")
+                .Contains("ایرانسل"));
+        Check("در نبود پاسخ COPS، اپراتور از IMSI تشخیص داده می‌شود",
+            Sim800Device.ResolveOperatorName(string.Empty, string.Empty, string.Empty, "432350466774037")
+                == "ایرانسل (43235)");
+        Check("همراه اول، رایتل و آپتل از IMSI درست تشخیص داده می‌شوند",
+            Sim800Device.ResolveOperatorName(string.Empty, string.Empty, string.Empty, "432110123456789").StartsWith("همراه اول") &&
+            Sim800Device.ResolveOperatorName(string.Empty, string.Empty, string.Empty, "432200123456789").StartsWith("رایتل") &&
+            Sim800Device.ResolveOperatorName(string.Empty, string.Empty, string.Empty, "432020123456789").StartsWith("آپتل"));
+        Check("برای سیم‌کارت MVNO، کد IMSI بر شبکه میزبان COPS اولویت دارد",
+            Sim800Device.ResolveOperatorName(
+                "+COPS: 0,0,\"MCI\"", "+COPS: 0,2,\"43211\"", string.Empty, "432020123456789")
+                .StartsWith("آپتل"));
+        Check("نام الفبایی اپراتور ناشناخته حفظ می‌شود",
+            Sim800Device.ResolveOperatorName(
+                "+COPS: 0,0,\"Example Network\"", string.Empty, string.Empty, string.Empty) == "Example Network");
+        Check("شماره AT+CNUM استخراج و بین‌المللی می‌شود",
+            Sim800Device.ParsePhoneNumber("+CNUM: \"\",\"09121234567\",129") == "+989121234567");
+        Check("شماره از دفترچه Own Numbers خوانده می‌شود",
+            Sim800Device.ParsePhoneNumber("ERROR", "+CPBR: 1,\"989351234567\",145,\"\"") == "+989351234567");
+        Check("نبود MSISDN صادقانه گزارش می‌شود",
+            Sim800Device.ParsePhoneNumber("+CNUM: \"\",\"\",129\r\nOK") == "روی سیم‌کارت ثبت نشده");
 
         // --- پاک‌سازی لاگ ----------------------------------------------------
         const string rawLog = "AT+CGSN\r\n490154203237518\r\nOK\r\nAT+CCID\r\n89610123456789012345\r\nOK";

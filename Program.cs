@@ -6,6 +6,8 @@ internal static class Program
     private static int Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        Application.SetCompatibleTextRenderingDefault(true);
+        Application.SetDefaultFont(AppFonts.Ui(10.5f));
 
         if (args.Contains("--self-test", StringComparer.OrdinalIgnoreCase))
         {
