@@ -39,6 +39,15 @@ internal sealed class MainForm : Form
     private ImeiNumber? _targetImei;
     private TabPage? _imeiPage;
     private readonly TextBox _logView = new();
+    private readonly CheckBox _unlockWrite = new();
+    private readonly CheckBox _removeSim = new();
+    private readonly CheckBox _persistProfile = new();
+    private readonly ComboBox _strategyPicker = new();
+    private readonly TextBox _writeLog = new();
+    private readonly Label _writeVerdict = new();
+    private readonly Button _writeButton = new();
+    private bool _writing;
+    private CancellationTokenSource? _writeCts;
     private const string InitialLogPlaceholder = "برای دیدن لاگ، دکمه «ذخیره فایل لاگ» را بزنید یا از تب ترمینال AT فرمانی ارسال کنید. داده شخصی به‌صورت خودکار ستاره‌دار می‌شود.";
 
     public MainForm()
@@ -277,99 +286,264 @@ internal sealed class MainForm : Form
 
     private TabPage BuildImeiLab()
     {
-        var page = NewPage("بررسی IMEI");
-        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6, Padding = new Padding(20) };
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));
+        var page = NewPage("بررسی و نوشتن IMEI");
+        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 7, Padding = new Padding(16) };
         body.RowStyles.Add(new RowStyle(SizeType.Absolute, 62));
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 96));
-        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 66));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         body.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         page.Controls.Add(body);
 
-        var warning = new Label
+        var notice = new Label
         {
-            Text = "اینجا IMEI واردشده فقط از نظر ساختاری (۱۵ رقم + رقم کنترلی Luhn) بررسی می‌شود. " +
-                   "این برنامه IMEI را روی سخت‌افزار نمی‌نویسد؛ دلیل فنی و قانونی آن در پایین همین صفحه آمده است.",
+            Text = "نوشتن IMEI فقط با تأیید صریح شما فعال می‌شود. صحت کار همیشه با بازخوانی خودکار تأیید می‌شود و " +
+                   "IMEI قبلی در گزارش ذخیره می‌گردد. پیش از شروع: سیم‌کارت را خارج و تغذیه را پایدار کنید.",
             ForeColor = Color.FromArgb(160, 72, 45),
             BackColor = Color.FromArgb(255, 244, 232),
-            Padding = new Padding(12, 9, 12, 8),
+            Padding = new Padding(12, 8, 12, 8),
             Dock = DockStyle.Fill
         };
-        body.Controls.Add(warning, 0, 0);
+        body.Controls.Add(notice, 0, 0);
 
         var row = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.RightToLeft,
             WrapContents = false,
-            Padding = new Padding(0, 8, 0, 0)
+            Padding = new Padding(0, 6, 0, 0)
         };
-        var imeiCaption = new Label
-        {
-            Text = "IMEI هدف (۱۵ رقم)",
-            AutoSize = true,
-            ForeColor = Navy,
-            Margin = new Padding(8, 12, 8, 0)
-        };
-        _imeiInput.Width = 330;
+        var caption = new Label { Text = "IMEI هدف (۱۵ رقم)", AutoSize = true, ForeColor = Navy, Margin = new Padding(8, 12, 8, 0) };
+        _imeiInput.Width = 300;
         _imeiInput.MaxLength = 15;
         _imeiInput.RightToLeft = RightToLeft.No;
         _imeiInput.Font = new Font("Cascadia Mono", 12f);
         _imeiInput.Margin = new Padding(8, 6, 8, 0);
         _imeiInput.TextChanged += (_, _) => ValidateImeiInput();
-
-        var useRead = NewActionButton("استفاده از IMEI فعلی دستگاه", Navy, 200);
+        var useRead = NewActionButton("IMEI فعلی دستگاه", Navy, 165);
         useRead.Margin = new Padding(8, 4, 8, 0);
         useRead.Click += (_, _) => CopyCurrentImei();
-
-        var planButton = NewActionButton("ساخت چک‌لیست", Accent, 175);
+        var planButton = NewActionButton("چک‌لیست", Color.FromArgb(70, 92, 125), 120);
         planButton.Margin = new Padding(8, 4, 8, 0);
         planButton.Click += (_, _) => BuildFlashPlan();
-
-        row.Controls.AddRange([imeiCaption, _imeiInput, useRead, planButton]);
+        row.Controls.AddRange([caption, _imeiInput, useRead, planButton]);
         body.Controls.Add(row, 0, 1);
 
         _imeiVerdict.Text = "هنوز چیزی وارد نشده است.";
         _imeiVerdict.ForeColor = Muted;
         _imeiVerdict.AutoSize = true;
         _imeiVerdict.Dock = DockStyle.Fill;
-        _imeiVerdict.Padding = new Padding(6, 6, 6, 0);
+        _imeiVerdict.Padding = new Padding(6, 4, 6, 0);
         body.Controls.Add(_imeiVerdict, 0, 2);
 
-        var breakdown = new Label
+        var options = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        _unlockWrite.Text = "مسئولیت و مالکیت دستگاه را می‌پذیرم و نوشتن IMEI را فعال می‌کنم";
+        _unlockWrite.AutoSize = true;
+        _unlockWrite.ForeColor = Color.FromArgb(150, 60, 45);
+        _unlockWrite.CheckedChanged += (_, _) => ToggleImeiWrite();
+        _removeSim.Text = "سیم‌کارت خارج شده است";
+        _removeSim.AutoSize = true;
+        _removeSim.Checked = true;
+        _persistProfile.Text = "ذخیره با AT&W";
+        _persistProfile.AutoSize = true;
+        _persistProfile.Checked = true;
+        _strategyPicker.DropDownStyle = ComboBoxStyle.DropDownList;
+        _strategyPicker.Width = 330;
+        _strategyPicker.Items.Add("خودکار (همه استراتژی‌ها به‌ترتیب)");
+        foreach (var strategy in ImeiWriter.Strategies) _strategyPicker.Items.Add(strategy.Title);
+        _strategyPicker.SelectedIndex = 0;
+        foreach (var control in new Control[] { _unlockWrite, _removeSim, _persistProfile, _strategyPicker })
         {
-            Dock = DockStyle.Fill,
-            ForeColor = Navy,
-            Padding = new Padding(6),
-            Text = "ساختار IMEI: ۸ رقم اول TAC (نوع دستگاه) + ۶ رقم سریال + ۱ رقم کنترلی (Luhn)."
-        };
-        body.Controls.Add(breakdown, 0, 3);
+            control.Margin = new Padding(8, 8, 8, 0);
+            options.Controls.Add(control);
+        }
+        body.Controls.Add(options, 0, 3);
 
-        _imeiPlan.Dock = DockStyle.Fill;
-        _imeiPlan.Multiline = true;
-        _imeiPlan.ReadOnly = true;
-        _imeiPlan.ScrollBars = ScrollBars.Both;
-        _imeiPlan.WordWrap = true;
-        _imeiPlan.RightToLeft = RightToLeft.Yes;
-        _imeiPlan.BackColor = Color.White;
-        _imeiPlan.Font = new Font("Segoe UI", 10f);
-        _imeiPlan.Text = "برای دیدن چک‌لیست کامل (پشتیبان، firmware، محدودیت‌های OTROMA) دکمه «ساخت چک‌لیست» را بزنید.";
-        body.Controls.Add(_imeiPlan, 0, 4);
+        _writeLog.Dock = DockStyle.Fill;
+        _writeLog.Multiline = true;
+        _writeLog.ReadOnly = true;
+        _writeLog.ScrollBars = ScrollBars.Both;
+        _writeLog.WordWrap = false;
+        _writeLog.RightToLeft = RightToLeft.Yes;
+        _writeLog.BackColor = Color.FromArgb(252, 253, 255);
+        _writeLog.Font = new Font("Segoe UI", 9.5f);
+        _writeLog.Text = "ترتیب استراتژی‌ها: EGMR با خاموش‌کردن رادیو → EGMR مستقیم → AT+SIMEI (SIMCom) → QCFG (Quectel).\r\n" +
+                         "در هر تلاش، پاسخ واقعی ماژول و نتیجه بازخوانی همین‌جا ثبت می‌شود.";
+        body.Controls.Add(_writeLog, 0, 4);
 
-        var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
-        var saveReport = NewActionButton("ذخیره گزارش", Color.FromArgb(70, 92, 125), 150);
-        saveReport.Click += (_, _) => SaveReport();
-        var copy = NewActionButton("کپی گزارش", Color.FromArgb(70, 92, 125), 130);
-        copy.Click += (_, _) =>
-        {
-            if (_imeiPlan.TextLength == 0) return;
-            Clipboard.SetText(_imeiPlan.Text);
-            _activity.Text = "گزارش در کلیپ‌بورد کپی شد.";
-        };
-        footer.Controls.AddRange([saveReport, copy]);
-        body.Controls.Add(footer, 0, 5);
+        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        _writeButton.Text = "نوشتن و بازخوانی IMEI";
+        _writeButton.Width = 210;
+        _writeButton.Height = 38;
+        _writeButton.BackColor = Color.FromArgb(200, 90, 60);
+        _writeButton.ForeColor = Color.White;
+        _writeButton.FlatStyle = FlatStyle.Flat;
+        _writeButton.FlatAppearance.BorderSize = 0;
+        _writeButton.Enabled = false;
+        _writeButton.Margin = new Padding(8, 6, 8, 0);
+        _writeButton.Click += async (_, _) => await WriteImeiAsync();
+
+        var stop = NewActionButton("توقف", Color.FromArgb(70, 92, 125), 100);
+        stop.Margin = new Padding(8, 4, 8, 0);
+        stop.Click += (_, _) => _writeCts?.Cancel();
+
+        var save = NewActionButton("ذخیره گزارش", Color.FromArgb(70, 92, 125), 140);
+        save.Margin = new Padding(8, 4, 8, 0);
+        save.Click += (_, _) => SaveWriteReport();
+
+        actions.Controls.AddRange([_writeButton, stop, save]);
+        body.Controls.Add(actions, 0, 5);
+
+        _writeVerdict.Text = "قفل نوشتن بسته است؛ ابتدا چک‌باکس بالا را انتخاب کنید.";
+        _writeVerdict.ForeColor = Muted;
+        _writeVerdict.AutoSize = true;
+        _writeVerdict.Dock = DockStyle.Fill;
+        _writeVerdict.Padding = new Padding(6, 4, 6, 0);
+        body.Controls.Add(_writeVerdict, 0, 6);
         return page;
+    }
+
+    private void ToggleImeiWrite()
+    {
+        AtGuard.ImeiWriteUnlocked = _unlockWrite.Checked;
+        _writeButton.Enabled = _unlockWrite.Checked && !_writing;
+        _writeVerdict.ForeColor = _unlockWrite.Checked ? Color.FromArgb(190, 96, 60) : Muted;
+        _writeVerdict.Text = _unlockWrite.Checked
+            ? "قفل باز است؛ IMEI معتبر را وارد و دکمه نوشتن را بزنید."
+            : "قفل نوشتن بسته است؛ ابتدا چک‌باکس بالا را انتخاب کنید.";
+    }
+
+    private async Task WriteImeiAsync()
+    {
+        if (_writing) return;
+        if (!EnsureConnected()) return;
+        if (!_unlockWrite.Checked)
+        {
+            MessageBox.Show(this, "ابتدا قفل نوشتن IMEI را باز کنید.", "قفل است", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        if (_targetImei is null)
+        {
+            ValidateImeiInput();
+            MessageBox.Show(this, "IMEI هدف معتبر نیست. مقدار ۱۵ رقمی با رقم کنترلی درست وارد کنید.", "IMEI نامعتبر", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        if (!_removeSim.Checked)
+        {
+            MessageBox.Show(this, "برای جلوگیری از خطای نوشتن، سیم‌کارت را خارج کنید و سپس تیک مربوطه را بزنید.", "سیم‌کارت", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var confirm = MessageBox.Show(this,
+            $"IMEI هدف: {_targetImei.Value}\r\n\r\nنوشتن روی حافظه ماژول انجام می‌شود و ممکن است برگشت‌پذیر نباشد. " +
+            "IMEI قبلی در گزارش ذخیره می‌شود. ادامه می‌دهید؟",
+            "تأیید نهایی نوشتن IMEI", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (confirm != DialogResult.Yes) return;
+
+        var target = _targetImei.Value;
+        _writing = true;
+        _writeCts = new CancellationTokenSource();
+        _writeButton.Enabled = false;
+        SetBusy(true);
+        _writeLog.Clear();
+        AppendWriteLog($"شروع عملیات — هدف {target} — {DateTime.Now:HH:mm:ss}");
+
+        try
+        {
+            var writer = new ImeiWriter(_device, (command, response) => AppendWriteLog($"  {command} → {Flatten(response)}"));
+            var progress = new Progress<string>(message => AppendWriteLog("» " + message));
+
+            string current = string.Empty;
+            if (_strategyPicker.SelectedIndex <= 0)
+            {
+                var outcome = await writer.AutoWriteAsync(target, _persistProfile.Checked, progress, _writeCts.Token);
+                current = outcome.Success?.ImeiAfter ?? outcome.ImeiBefore;
+                _writeLog.Text = outcome.Report;
+                FinishWrite(outcome.Success is not null, outcome.Success?.Strategy.Title ?? "—", outcome.ImeiBefore, current, target);
+            }
+            else
+            {
+                var strategy = ImeiWriter.Strategies[_strategyPicker.SelectedIndex - 1];
+                var before = await writer.ReadImeiAsync(_writeCts.Token);
+                var result = await writer.WriteAsync(strategy, target, before, _persistProfile.Checked, progress, _writeCts.Token);
+                current = result.ImeiAfter;
+                _writeLog.Text = ImeiWriter.BuildReport([result], result.Verified ? result : null, before, target);
+                FinishWrite(result.Verified, strategy.Title, before, current, target);
+            }
+
+            await LoadSnapshotAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            AppendWriteLog("عملیات توسط کاربر متوقف شد.");
+            _writeVerdict.ForeColor = Color.FromArgb(160, 72, 45);
+            _writeVerdict.Text = "متوقف شد. برای اطمینان، IMEI فعلی را دوباره بخوانید.";
+        }
+        catch (Exception ex)
+        {
+            AppendWriteLog("خطا: " + ex.Message);
+            _writeVerdict.ForeColor = Color.FromArgb(180, 62, 62);
+            _writeVerdict.Text = "خطا در اجرای عملیات: " + ex.Message;
+        }
+        finally
+        {
+            _writing = false;
+            _writeCts?.Dispose();
+            _writeCts = null;
+            SetBusy(false);
+            _writeButton.Enabled = _unlockWrite.Checked;
+        }
+    }
+
+    private void FinishWrite(bool verified, string strategyTitle, string before, string after, string target)
+    {
+        if (verified)
+        {
+            _writeVerdict.ForeColor = Color.FromArgb(0, 130, 110);
+            _writeVerdict.Text = $"✓ موفق — {strategyTitle} — IMEI اکنون {after} است. ماژول را یک بار ری‌استارت کنید.";
+            _activity.Text = $"IMEI به {after} تغییر کرد و بازخوانی تأیید شد.";
+        }
+        else
+        {
+            _writeVerdict.ForeColor = Color.FromArgb(180, 62, 62);
+            _writeVerdict.Text = $"✗ ناموفق — IMEI همچنان {(after.Length == 15 ? after : before)} است. گزارش پایین را ذخیره و بررسی کنید.";
+            _activity.Text = "نوشتن IMEI ناموفق بود؛ گزارش عملیات ثبت شد.";
+        }
+    }
+
+    private void AppendWriteLog(string line)
+    {
+        _writeLog.AppendText(line + Environment.NewLine);
+        _writeLog.SelectionStart = _writeLog.TextLength;
+        _writeLog.ScrollToCaret();
+    }
+
+    private void SaveWriteReport()
+    {
+        if (_writeLog.TextLength == 0)
+        {
+            MessageBox.Show(this, "هنوز گزارشی ساخته نشده است.");
+            return;
+        }
+        using var dialog = new SaveFileDialog
+        {
+            Title = "ذخیره گزارش نوشتن IMEI",
+            Filter = "Text|*.txt",
+            FileName = $"imei-write-{DateTime.Now:yyyyMMdd-HHmm}.txt"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        File.WriteAllText(dialog.FileName, _writeLog.Text);
+        _activity.Text = "گزارش ذخیره شد: " + dialog.FileName;
+    }
+
+    private static string Flatten(string? response)
+    {
+        if (string.IsNullOrWhiteSpace(response)) return "(خالی)";
+        var flat = string.Join(" ", response.Replace("\r", string.Empty)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        return flat.Length <= 120 ? flat : flat[..120] + "…";
     }
 
     private TabPage BuildCardProfile()
@@ -475,12 +649,13 @@ internal sealed class MainForm : Form
                    "۱) پورت و Baud را انتخاب و وصل شوید. ۲) در داشبورد «دریافت همه اطلاعات» را بزنید. " +
                    "۳) در تب «کارت و سیم‌کارت» وضعیت ICCID/IMSI و PIN را بررسی کنید. " +
                    "۴) در تب «بررسی IMEI» شناسه را از نظر ساختاری بیازمایید و چک‌لیست پشتیبان را بگیرید.\r\n\r\n" +
-                   "محدودیت مهم\r\n\r\n" +
-                   "SIM800L ماژول GSM/GPRS با کنترلر OTROMA است. شناسه IMEI در ناحیه امن کنترلر و بوت‌لودر قرار دارد؛ " +
-                   "هیچ فرمان AT استاندارد یا دستور NV عمومی برای تغییر آن وجود ندارد (برخلاف فرمان‌های QIMEI که مخصوص Quectel است). " +
-                   "فلش کردن بسته کامل firmware با ابزار رسمی سازنده می‌تواند نسخه نرم‌افزار را تغییر دهد، اما هویت رادیویی را عوض نمی‌کند " +
-                   "و در صورت ناسازگاری برد را بوت‌نشدنی می‌کند. جعل IMEI در ایران و اتحادیه اروپا پیگرد قانونی دارد و اپراتورها IMEI تکراری یا بلاک‌شده را رد می‌کنند؛ " +
-                   "برای رفع مشکل ثبت گوشی، از مسیر رسمی سازمان تنظیم مقررات و اپراتور (رجیستری) استفاده کنید.\r\n\r\n" +
+                   "نوشتن IMEI — آنچه واقعاً اتفاق می‌افتد\r\n\r\n" +
+                   "۱) چک‌باکس تأیید را در تب «بررسی و نوشتن IMEI» بزنید تا قفل فرمان‌ها باز شود (AtGuard.ImeiWriteUnlocked).\r\n" +
+                   "۲) سیم‌کارت را خارج کنید؛ بعضی firmwareها با سیم‌کارت حاضر خطا می‌دهند.\r\n" +
+                   "۳) برنامه خودکار چند استراتژی را به‌ترتیب امتحان می‌کند: AT+CFUN=0 + AT+EGMR=1,7,\"…\" + AT+CFUN=1، سپس AT+EGMR مستقیم، سپس AT+SIMEI (اختصاصی SIMCom، با محدودیت تعداد نوشتن) و در آخر AT+QCFG مخصوص Quectel.\r\n" +
+                   "۴) موفقیت فقط وقتی اعلام می‌شود که شناسه با AT+GSN/AT+CGSN بازخوانی و با هدف مقایسه شود. اگر فرمان‌ها OK بگیرند اما شناسه تغییر نکند، صادقانه «ناموفق» گزارش می‌شود.\r\n" +
+                   "۵) IMEI قبلی همیشه در گزارش ذخیره می‌شود؛ برای بازگردانی همان مسیر را با مقدار قبلی تکرار کنید.\r\n\r\n" +
+                   "اگر همه استراتژی‌ها ERROR دادند، firmware شما فرمان نوشتن ندارد؛ تنها مسیر باقی‌مانده فلش بسته اختصاصی همان revision با ابزار رسمی است.\r\n\r\n" +
                    "درباره سیم‌کارت\r\n\r\n" +
                    "کارت فیزیکی: خواندن ICCID/IMSI/PIN مجاز است؛ نوشتن شناسه روی کارت از طریق AT معمول نیست و انجام نمی‌شود. " +
                    "eSIM/eUICC و MFF2 با LPA/APDU مدیریت می‌شوند و SIM800L از AT+CCHO/AT+CSIM پشتیبانی کامل ندارد."
@@ -584,6 +759,11 @@ internal sealed class MainForm : Form
     {
         if (_device.IsOpen)
         {
+            if (_writing)
+            {
+                MessageBox.Show(this, "در حال نوشتن IMEI هستید؛ تا پایان کار اتصال را قطع نکنید.", "عملیات در جریان", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
             _device.Close();
             SetConnection(false);
             return;

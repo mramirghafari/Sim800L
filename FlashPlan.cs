@@ -64,12 +64,12 @@ internal sealed record FlashPlan
         if (TargetImei is not null && !TacPattern.IsMatch(TargetImei.Tac))
             issues.Add(new(PlanIssueKind.Blocker, "پیشوند TAC باید ۸ رقم باشد."));
         else if (TargetImei is not null)
-            issues.Add(new(PlanIssueKind.Info, $"TAC به‌صورت ساختاری قابل قبول است ({TargetImei.TacFormatted}) اما در GSMA ثبت نشده است؛ مالکیت قانونی آن بررسی شود."));
+            issues.Add(new(PlanIssueKind.Info, $"TAC ساختاراً درست است ({TargetImei.TacFormatted}); ثبت آن در GSMA و مالکیت قانونی را بررسی کنید."));
 
         if (TargetImei is not null)
         {
             issues.Add(new(PlanIssueKind.Unsupported,
-                "SIM800L از IMEI بوت‌استرپ در حافظه امن/فلش‌بوت کنترلر OTROMA استفاده می‌کند و هویت را از طریق فرمان AT یا فلش به راحتی تغییر نمی‌دهد. نوشتن IMEI مالکیت‌دار در حافظه NV این تراشه در این برنامه پیاده‌سازی نشده است."));
+                "نوشتن IMEI از مسیر فلش firmware انجام نمی‌شود؛ برای آن از تب «بررسی و نوشتن IMEI» با استراتژی‌های AT+EGMR/AT+SIMEI استفاده کنید. بسته firmware هویت رادیویی را تضمینی تغییر نمی‌دهد."));
         }
 
         if (Firmware is not null && Firmware.Size < 1024L * 1024)

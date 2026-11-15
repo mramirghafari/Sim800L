@@ -101,9 +101,49 @@ internal static class SelfTests
         Check("لاگ خالی بدون خطا پاک‌سازی می‌شود", SessionLogger.Redact(null) == string.Empty);
 
         // --- محافظ AT --------------------------------------------------------
+        AtGuard.ImeiWriteUnlocked = false;
         Check("فرمان معمولی AT مجاز است", AtGuard.IsAllowed("AT+CSQ", out _));
-        Check("نوشتن IMEI مسدود است", !AtGuard.IsAllowed("AT+QIMEI=490154203237518", out _));
+        Check("خواندن IMEI همیشه مجاز است", AtGuard.IsAllowed("AT+GSN", out _) && AtGuard.IsAllowed("AT+SIMEI?", out _));
+        Check("نوشتن IMEI در حالت قفل مسدود است", !AtGuard.IsAllowed("AT+QIMEI=490154203237518", out _));
+        Check("AT+EGMR نوشتن در حالت قفل مسدود است", !AtGuard.IsAllowed("AT+EGMR=1,7,\"490154203237518\"", out _));
+        Check("AT+SIMEI نوشتن در حالت قفل مسدود است", !AtGuard.IsAllowed("AT+SIMEI=\"490154203237518\"", out _));
         Check("فرمان بدون AT مسدود است", !AtGuard.IsAllowed("QIMEI=1", out _));
+        Check("نوشتن خام NV حتی در حالت باز هم مسدود است", !AtGuard.IsAllowed("AT+NVWRITE=1", out _));
+
+        AtGuard.ImeiWriteUnlocked = true;
+        Check("پس از باز کردن قفل، AT+EGMR مجاز است", AtGuard.IsAllowed("AT+EGMR=1,7,\"490154203237518\"", out _));
+        Check("پس از باز کردن قفل، AT+SIMEI مجاز است", AtGuard.IsAllowed("AT+SIMEI=\"490154203237518\"", out _));
+        Check("پس از باز کردن قفل هم NV خام مسدود است", !AtGuard.IsAllowed("AT+NVWRITE=1", out _));
+        AtGuard.ImeiWriteUnlocked = false;
+
+        // --- سیاست فرمان IMEI ------------------------------------------------
+        Check("تشخیص فرمان نوشتن IMEI", ImeiCommandPolicy.IsImeiMutation("AT+EGMR=1,7,\"1\"") &&
+            ImeiCommandPolicy.IsImeiMutation("AT+SIMEI=\"1\"") &&
+            ImeiCommandPolicy.IsImeiMutation("AT+QCFG=\"IMEI\",\"1\""));
+        Check("خواندن به‌عنوان نوشتن تشخیص داده نمی‌شود",
+            !ImeiCommandPolicy.IsImeiMutation("AT+GSN") && !ImeiCommandPolicy.IsImeiMutation("AT+EGMR=0,7") &&
+            ImeiCommandPolicy.IsImeiRead("AT+GSN"));
+
+        // --- موتور نوشتن IMEI ------------------------------------------------
+        Check("استخراج IMEI از پاسخ AT+GSN",
+            ImeiWriter.ExtractImei("AT+GSN\r\r\n490154203237518\r\n\r\nOK\r\n") == "490154203237518");
+        Check("استخراج IMEI، URCهای اضافی را نادیده می‌گیرد",
+            ImeiWriter.ExtractImei("\r\nRDY\r\n+CFUN: 1\r\n352099001761481\r\nOK\r\n") == "352099001761481");
+        Check("پاسخ ERROR شناسایی می‌شود", ImeiWriter.Classify("\r\n+CME ERROR: operation not supported\r\n") == StepStatus.Error);
+        Check("پاسخ بی‌پاسخ (timeout) شناسایی می‌شود",
+            ImeiWriter.Classify("(بدون پاسخ؛ مهلت دریافت تمام شد)") == StepStatus.Timeout);
+        Check("پاسخ OK شناسایی می‌شود", ImeiWriter.Classify("\r\nOK\r\n") == StepStatus.Ok);
+        Check("چهار استراتژی نوشتن تعریف شده است", ImeiWriter.Strategies.Count == 4);
+        Check("استراتژی EGMR مقدار هدف را جایگذاری می‌کند",
+            ImeiWriter.Strategies.First(s => s.Kind == WriteStrategyKind.Egmr)
+                .Build("490154203237518").Single() == "AT+EGMR=1,7,\"490154203237518\"");
+        Check("استراتژی QCFG به‌عنوان Quectel علامت خورده است",
+            ImeiWriter.Strategies.Single(s => s.Kind == WriteStrategyKind.QcfgQuectel).QuectelOnly);
+        Check("گزارش موفقیت فقط با بازخوانی یکسان ساخته می‌شود",
+            BuildVerifiedResult().Verified && !BuildUnverifiedResult().Verified);
+        Check("گزارش ناموفق، IMEI قبلی را برای بازگردانی نگه می‌دارد",
+            ImeiWriter.BuildReport([BuildUnverifiedResult()], null, "490154203237518", "352099001761481")
+                .Contains("490154203237518"));
 
         // --- بسته firmware ---------------------------------------------------
         var temp = Path.Combine(Path.GetTempPath(), $"fw-{Guid.NewGuid():N}.bin");
@@ -130,5 +170,23 @@ internal static class SelfTests
 
         log?.Invoke(failures == 0 ? "همه تست‌ها موفق بود." : $"{failures} تست ناموفق بود.");
         return failures;
+    }
+
+    /// <summary>نتیجه‌ای که ماژول را تأییدشده شبیه‌سازی می‌کند (برای تست خالص منطق گزارش).</summary>
+    private static WriteResult BuildVerifiedResult()
+    {
+        var strategy = ImeiWriter.Strategies.First(s => s.Kind == WriteStrategyKind.Egmr);
+        return new WriteResult(strategy,
+            [new WriteStep("AT+EGMR=1,7,\"352099001761481\"", "\r\nOK\r\n", StepStatus.Ok)],
+            "490154203237518", "352099001761481", true, "تأیید شد");
+    }
+
+    /// <summary>ماژول OK می‌دهد اما شناسه تغییر نکرده است.</summary>
+    private static WriteResult BuildUnverifiedResult()
+    {
+        var strategy = ImeiWriter.Strategies.First(s => s.Kind == WriteStrategyKind.Simei);
+        return new WriteResult(strategy,
+            [new WriteStep("AT+SIMEI=\"352099001761481\"", "\r\nOK\r\n", StepStatus.Ok)],
+            "490154203237518", "490154203237518", false, "تغییر نکرد");
     }
 }
