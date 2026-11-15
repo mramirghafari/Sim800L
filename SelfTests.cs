@@ -141,6 +141,12 @@ internal static class SelfTests
             ImeiWriter.Strategies.Single(s => s.Kind == WriteStrategyKind.QcfgQuectel).QuectelOnly);
         Check("گزارش موفقیت فقط با بازخوانی یکسان ساخته می‌شود",
             BuildVerifiedResult().Verified && !BuildUnverifiedResult().Verified);
+        var acceptedButNotPersisted = new WriteResult(
+            ImeiWriter.Strategies[0],
+            [new WriteStep("AT+EGMR=1,7,\"352099001761481\"", "\r\nOK\r\n", StepStatus.Ok)],
+            "490154203237518", "490154203237518", false, "OK ولی بدون تغییر");
+        Check("حالت «OK اما بدون تغییر» تشخیص داده می‌شود", acceptedButNotPersisted.AcceptedButNotPersisted);
+        Check("حالت تأییدشده «OK اما بدون تغییر» محسوب نمی‌شود", !BuildVerifiedResult().AcceptedButNotPersisted);
         Check("گزارش ناموفق، IMEI قبلی را برای بازگردانی نگه می‌دارد",
             ImeiWriter.BuildReport([BuildUnverifiedResult()], null, "490154203237518", "352099001761481")
                 .Contains("490154203237518"));
