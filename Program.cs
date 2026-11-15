@@ -11,11 +11,15 @@ internal static class Program
         {
             try
             {
-                if (!AtGuard.IsAllowed("AT+CSQ", out _)) return 10;
-                if (AtGuard.IsAllowed("AT+QIMEI=123456789012345", out _)) return 11;
+                var failures = SelfTests.Run(line => Console.WriteLine(line));
                 using var form = new MainForm();
                 form.CreateControl();
-                return form.Controls.Count > 0 ? 0 : 12;
+                if (form.Controls.Count == 0)
+                {
+                    Console.WriteLine("FAIL  فرم اصلی کنترل نساخت");
+                    failures++;
+                }
+                return failures;
             }
             catch
             {

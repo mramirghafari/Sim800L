@@ -32,8 +32,14 @@ internal sealed class MainForm : Form
     private readonly CheckBox _flashConsent = new();
     private FirmwarePackage? _firmware;
     
-     // متغیر برای ذخیره IMEI جدید
-    private string _targetImei;
+    private readonly TextBox _imeiInput = new();
+    private readonly Label _imeiVerdict = new();
+    private readonly TextBox _imeiPlan = new();
+    private readonly Label _cardVerdict = new();
+    private ImeiNumber? _targetImei;
+    private TabPage? _imeiPage;
+    private readonly TextBox _logView = new();
+    private const string InitialLogPlaceholder = "برای دیدن لاگ، دکمه «ذخیره فایل لاگ» را بزنید یا از تب ترمینال AT فرمانی ارسال کنید. داده شخصی به‌صورت خودکار ستاره‌دار می‌شود.";
 
     public MainForm()
     {
@@ -74,6 +80,10 @@ internal sealed class MainForm : Form
         _tabs.TabPages.Add(BuildDashboard());
         _tabs.TabPages.Add(BuildTerminal());
         _tabs.TabPages.Add(BuildFlasher());
+        _imeiPage = BuildImeiLab();
+        _tabs.TabPages.Add(_imeiPage);
+        _tabs.TabPages.Add(BuildCardProfile());
+        _tabs.TabPages.Add(BuildLogs());
         _tabs.TabPages.Add(BuildGuide());
         root.Controls.Add(_tabs, 0, 1);
     }
@@ -265,6 +275,188 @@ internal sealed class MainForm : Form
         return page;
     }
 
+    private TabPage BuildImeiLab()
+    {
+        var page = NewPage("بررسی IMEI");
+        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6, Padding = new Padding(20) };
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 62));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 96));
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+        page.Controls.Add(body);
+
+        var warning = new Label
+        {
+            Text = "اینجا IMEI واردشده فقط از نظر ساختاری (۱۵ رقم + رقم کنترلی Luhn) بررسی می‌شود. " +
+                   "این برنامه IMEI را روی سخت‌افزار نمی‌نویسد؛ دلیل فنی و قانونی آن در پایین همین صفحه آمده است.",
+            ForeColor = Color.FromArgb(160, 72, 45),
+            BackColor = Color.FromArgb(255, 244, 232),
+            Padding = new Padding(12, 9, 12, 8),
+            Dock = DockStyle.Fill
+        };
+        body.Controls.Add(warning, 0, 0);
+
+        var row = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = false,
+            Padding = new Padding(0, 8, 0, 0)
+        };
+        var imeiCaption = new Label
+        {
+            Text = "IMEI هدف (۱۵ رقم)",
+            AutoSize = true,
+            ForeColor = Navy,
+            Margin = new Padding(8, 12, 8, 0)
+        };
+        _imeiInput.Width = 330;
+        _imeiInput.MaxLength = 15;
+        _imeiInput.RightToLeft = RightToLeft.No;
+        _imeiInput.Font = new Font("Cascadia Mono", 12f);
+        _imeiInput.Margin = new Padding(8, 6, 8, 0);
+        _imeiInput.TextChanged += (_, _) => ValidateImeiInput();
+
+        var useRead = NewActionButton("استفاده از IMEI فعلی دستگاه", Navy, 200);
+        useRead.Margin = new Padding(8, 4, 8, 0);
+        useRead.Click += (_, _) => CopyCurrentImei();
+
+        var planButton = NewActionButton("ساخت چک‌لیست", Accent, 175);
+        planButton.Margin = new Padding(8, 4, 8, 0);
+        planButton.Click += (_, _) => BuildFlashPlan();
+
+        row.Controls.AddRange([imeiCaption, _imeiInput, useRead, planButton]);
+        body.Controls.Add(row, 0, 1);
+
+        _imeiVerdict.Text = "هنوز چیزی وارد نشده است.";
+        _imeiVerdict.ForeColor = Muted;
+        _imeiVerdict.AutoSize = true;
+        _imeiVerdict.Dock = DockStyle.Fill;
+        _imeiVerdict.Padding = new Padding(6, 6, 6, 0);
+        body.Controls.Add(_imeiVerdict, 0, 2);
+
+        var breakdown = new Label
+        {
+            Dock = DockStyle.Fill,
+            ForeColor = Navy,
+            Padding = new Padding(6),
+            Text = "ساختار IMEI: ۸ رقم اول TAC (نوع دستگاه) + ۶ رقم سریال + ۱ رقم کنترلی (Luhn)."
+        };
+        body.Controls.Add(breakdown, 0, 3);
+
+        _imeiPlan.Dock = DockStyle.Fill;
+        _imeiPlan.Multiline = true;
+        _imeiPlan.ReadOnly = true;
+        _imeiPlan.ScrollBars = ScrollBars.Both;
+        _imeiPlan.WordWrap = true;
+        _imeiPlan.RightToLeft = RightToLeft.Yes;
+        _imeiPlan.BackColor = Color.White;
+        _imeiPlan.Font = new Font("Segoe UI", 10f);
+        _imeiPlan.Text = "برای دیدن چک‌لیست کامل (پشتیبان، firmware، محدودیت‌های OTROMA) دکمه «ساخت چک‌لیست» را بزنید.";
+        body.Controls.Add(_imeiPlan, 0, 4);
+
+        var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        var saveReport = NewActionButton("ذخیره گزارش", Color.FromArgb(70, 92, 125), 150);
+        saveReport.Click += (_, _) => SaveReport();
+        var copy = NewActionButton("کپی گزارش", Color.FromArgb(70, 92, 125), 130);
+        copy.Click += (_, _) =>
+        {
+            if (_imeiPlan.TextLength == 0) return;
+            Clipboard.SetText(_imeiPlan.Text);
+            _activity.Text = "گزارش در کلیپ‌بورد کپی شد.";
+        };
+        footer.Controls.AddRange([saveReport, copy]);
+        body.Controls.Add(footer, 0, 5);
+        return page;
+    }
+
+    private TabPage BuildCardProfile()
+    {
+        var page = NewPage("کارت و سیم‌کارت");
+        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(20) };
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 60));
+        page.Controls.Add(body);
+
+        var head = new Panel { Dock = DockStyle.Fill };
+        head.Controls.Add(new Label
+        {
+            Text = "خواندن داده کارت",
+            Font = new Font("Segoe UI Semibold", 13f),
+            ForeColor = Navy,
+            AutoSize = true,
+            Location = new Point(850, 8)
+        });
+        head.Controls.Add(new Label
+        {
+            Text = "SIM800L فقط کارت فیزیکی را می‌خواند. eSIM/eUICC نیاز به ابزار LPA/APDU جداگانه دارد.",
+            ForeColor = Muted,
+            AutoSize = true,
+            Location = new Point(540, 40)
+        });
+        body.Controls.Add(head, 0, 0);
+
+        _cardVerdict.Dock = DockStyle.Fill;
+        _cardVerdict.Padding = new Padding(10);
+        _cardVerdict.BackColor = Color.White;
+        _cardVerdict.ForeColor = Navy;
+        _cardVerdict.Font = new Font("Segoe UI", 10.5f);
+        _cardVerdict.Text = SimCardProfile.Describe("—", "—") + string.Join(Environment.NewLine, SimCardProfile.SafetyNotes().Select(n => "• " + n));
+        body.Controls.Add(_cardVerdict, 0, 1);
+
+        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        var probe = NewActionButton("بررسی کارت", Accent, 150);
+        probe.Click += async (_, _) => await ProbeCardAsync();
+        var notes = NewActionButton("نمایش نکات ایمنی", Color.FromArgb(70, 92, 125), 160);
+        notes.Click += (_, _) => _cardVerdict.Text = string.Join(Environment.NewLine, SimCardProfile.SafetyNotes().Select(n => "• " + n));
+        actions.Controls.AddRange([probe, notes]);
+        body.Controls.Add(actions, 0, 2);
+        return page;
+    }
+
+    private TabPage BuildLogs()
+    {
+        var page = NewPage("گزارش‌ها و لاگ");
+        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(20) };
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 60));
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 60));
+        page.Controls.Add(body);
+
+        body.Controls.Add(new Label
+        {
+            Text = "تمام فرمان‌ها و پاسخ‌ها با زمان ذخیره می‌شوند. محتوای ICCID/IMSI و IMEI داده شخصی است؛ قبل از ارسال به شخص دیگر آن را پاک کنید.",
+            ForeColor = Muted,
+            Dock = DockStyle.Fill,
+            Padding = new Padding(4, 12, 4, 0)
+        }, 0, 0);
+
+        _logView.Dock = DockStyle.Fill;
+        _logView.Multiline = true;
+        _logView.ReadOnly = true;
+        _logView.ScrollBars = ScrollBars.Both;
+        _logView.WordWrap = false;
+        _logView.RightToLeft = RightToLeft.No;
+        _logView.Font = new Font("Cascadia Mono", 9.5f);
+        _logView.BackColor = Color.White;
+        _logView.Text = InitialLogPlaceholder;
+        body.Controls.Add(_logView, 0, 1);
+
+        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        var export = NewActionButton("ذخیره فایل لاگ", Accent, 160);
+        export.Click += (_, _) => ExportLog();
+        var clear = NewActionButton("پاک کردن نمایش", Color.FromArgb(70, 92, 125), 140);
+        clear.Click += (_, _) => _logView.Clear();
+        var redact = NewActionButton("پاک‌سازی داده شخصی", Color.FromArgb(70, 92, 125), 190);
+        redact.Click += (_, _) => _logView.Text = SessionLogger.Redact(_logView.Text);
+        actions.Controls.AddRange([export, clear, redact]);
+        body.Controls.Add(actions, 0, 2);
+        return page;
+    }
+
     private TabPage BuildGuide()
     {
         var page = NewPage("راهنما و ایمنی");
@@ -277,10 +469,21 @@ internal sealed class MainForm : Form
             Text = "اتصال پیشنهادی\r\n\r\n" +
                    "• منبع تغذیه پایدار ۳٫۷ تا ۴٫۲ ولت با تحمل پیک حدود ۲ آمپر\r\n" +
                    "• زمین مشترک بین USB‑TTL و SIM800L و اتصال ضربدری TX/RX\r\n" +
-                   "• سطح منطقی UART سازگار و آنتن مناسب\r\n\r\n" +
+                   "• سطح منطقی UART سازگار (با مقسم مقاومتی اگر آداپتور ۵ ولت است) و آنتن مناسب\r\n" +
+                   "• خازن ۱۰۰۰ میکروفاراد نزدیک پایه VBAT برای جلوگیری از ریست شدن هنگام ثبت شبکه\r\n\r\n" +
                    "روند کار\r\n\r\n" +
-                   "۱) پورت و Baud را انتخاب کنید. ۲) اتصال را بزنید. ۳) اطلاعات دستگاه را دریافت کنید. ۴) تنظیمات مجاز را از ترمینال AT اعمال کنید.\r\n\r\n" +
-                   "IMEI فقط خوانده و نمایش داده می‌شود. این برنامه فرمان نوشتن IMEI یا داده‌های NV را ارسال نمی‌کند. برای firmware فقط از فایل و ابزار رسمی سازگار با revision دقیق برد استفاده کنید."
+                   "۱) پورت و Baud را انتخاب و وصل شوید. ۲) در داشبورد «دریافت همه اطلاعات» را بزنید. " +
+                   "۳) در تب «کارت و سیم‌کارت» وضعیت ICCID/IMSI و PIN را بررسی کنید. " +
+                   "۴) در تب «بررسی IMEI» شناسه را از نظر ساختاری بیازمایید و چک‌لیست پشتیبان را بگیرید.\r\n\r\n" +
+                   "محدودیت مهم\r\n\r\n" +
+                   "SIM800L ماژول GSM/GPRS با کنترلر OTROMA است. شناسه IMEI در ناحیه امن کنترلر و بوت‌لودر قرار دارد؛ " +
+                   "هیچ فرمان AT استاندارد یا دستور NV عمومی برای تغییر آن وجود ندارد (برخلاف فرمان‌های QIMEI که مخصوص Quectel است). " +
+                   "فلش کردن بسته کامل firmware با ابزار رسمی سازنده می‌تواند نسخه نرم‌افزار را تغییر دهد، اما هویت رادیویی را عوض نمی‌کند " +
+                   "و در صورت ناسازگاری برد را بوت‌نشدنی می‌کند. جعل IMEI در ایران و اتحادیه اروپا پیگرد قانونی دارد و اپراتورها IMEI تکراری یا بلاک‌شده را رد می‌کنند؛ " +
+                   "برای رفع مشکل ثبت گوشی، از مسیر رسمی سازمان تنظیم مقررات و اپراتور (رجیستری) استفاده کنید.\r\n\r\n" +
+                   "درباره سیم‌کارت\r\n\r\n" +
+                   "کارت فیزیکی: خواندن ICCID/IMSI/PIN مجاز است؛ نوشتن شناسه روی کارت از طریق AT معمول نیست و انجام نمی‌شود. " +
+                   "eSIM/eUICC و MFF2 با LPA/APDU مدیریت می‌شوند و SIM800L از AT+CCHO/AT+CSIM پشتیبانی کامل ندارد."
         };
         page.Controls.Add(text);
         return page;
@@ -455,6 +658,132 @@ internal sealed class MainForm : Form
         finally { SetBusy(false); }
     }
 
+    private void ValidateImeiInput()
+    {
+        if (ImeiNumber.TryParse(_imeiInput.Text, out var imei, out var error))
+        {
+            _targetImei = imei;
+            _imeiVerdict.ForeColor = Color.FromArgb(0, 130, 110);
+            _imeiVerdict.Text = $"✓ ساختار درست است — TAC: {imei!.TacFormatted} | سریال: {imei.Serial} | رقم کنترلی: {imei.CheckDigit}";
+        }
+        else
+        {
+            _targetImei = null;
+            _imeiVerdict.ForeColor = Color.FromArgb(180, 62, 62);
+            _imeiVerdict.Text = "✗ " + error;
+        }
+    }
+
+    private void CopyCurrentImei()
+    {
+        var current = _values.TryGetValue("imei", out var label) ? label.Text : string.Empty;
+        var digits = new string(current.Where(char.IsDigit).ToArray());
+        if (digits.Length != 15)
+        {
+            MessageBox.Show(this, "ابتدا اطلاعات دستگاه را از داشبورد دریافت کنید.", "IMEI موجود نیست", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        _imeiInput.Text = digits[..15];
+    }
+
+    private FlashPlan? CreatePlan()
+    {
+        if (_targetImei is null && _imeiInput.TextLength > 0)
+        {
+            MessageBox.Show(this, "IMEI واردشده معتبر نیست؛ ابتدا آن را اصلاح کنید.", "IMEI نامعتبر", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return null;
+        }
+
+        return new FlashPlan
+        {
+            TargetImei = _targetImei,
+            Firmware = _firmware,
+            FirmwareVariant = "SIM800L 2/15",
+            ModuleRespondsToAt = _device.IsOpen,
+            HasValidBackup = _firmware is not null && File.Exists(_firmware.FullPath),
+            ConsentGiven = _flashConsent.Checked
+        };
+    }
+
+    private void BuildFlashPlan()
+    {
+        var plan = CreatePlan();
+        if (plan is null) return;
+
+        var lines = new List<string> { plan.ToReport(), string.Empty, "پشتیبان‌های لازم پیش از هر عملیات:", new string('-', 40) };
+        foreach (var item in plan.BackupChecklist())
+            lines.Add($"• {item.Name} — منبع: {item.Source} | فرمان: {item.ReadCommand}\r\n  دلیل: {item.Reason}");
+
+        lines.Add(string.Empty);
+        if (plan.HasBlockers)
+            lines.Add("نتیجه: عملیات متوقف است. موارد Blocker بالا (تأیید، پشتیبان یا firmware) باید برطرف شوند.");
+        else
+        {
+            lines.Add("نتیجه: فلش رسمی firmware پس از تأیید و با ابزار سازنده مجاز است.");
+            lines.Add("توجه: مورد Unsupported درباره نوشتن IMEI با هیچ‌یک از فرمان‌های AT یا این برنامه قابل انجام نیست و گزارش آن فقط برای شفافیت است.");
+        }
+
+        _imeiPlan.Text = string.Join(Environment.NewLine, lines);
+        if (_imeiPage is not null) _tabs.SelectedTab = _imeiPage;
+    }
+
+    private void SaveReport()
+    {
+        if (_imeiPlan.TextLength == 0)
+        {
+            MessageBox.Show(this, "ابتدا چک‌لیست را بسازید.");
+            return;
+        }
+        using var dialog = new SaveFileDialog
+        {
+            Title = "ذخیره گزارش",
+            Filter = "Text|*.txt|Markdown|*.md",
+            FileName = $"sim800l-report-{DateTime.Now:yyyyMMdd-HHmm}.txt"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        File.WriteAllText(dialog.FileName, _imeiPlan.Text);
+        _activity.Text = "گزارش ذخیره شد: " + dialog.FileName;
+    }
+
+    private async Task ProbeCardAsync()
+    {
+        if (!EnsureConnected()) return;
+        try
+        {
+            SetBusy(true);
+            var iccid = await _device.SendAsync("AT+CCID", 3000);
+            var imsi = await _device.SendAsync("AT+CIMI", 3000);
+            var pin = await _device.SendAsync("AT+CPIN?", 3000);
+            var sim = await _device.SendAsync("AT+CSIM=0,00A40000023F00", 3000);
+
+            AppendTerminal("AT+CCID", iccid);
+            AppendTerminal("AT+CIMI", imsi);
+            AppendTerminal("AT+CPIN?", pin);
+
+            var uiccSupported = !sim.Contains("ERROR", StringComparison.OrdinalIgnoreCase);
+            _cardVerdict.Text = SimCardProfile.Describe(Simplified(iccid), Simplified(imsi)) +
+                Environment.NewLine +
+                $"وضعیت PIN: {Simplified(pin)}{Environment.NewLine}" +
+                (uiccSupported
+                    ? "APDU خام پاسخ داد؛ کارت با فرمان AT+CSIM تا حدی قابل دسترسی است."
+                    : "APDU خام پاسخ نداد (ERROR)؛ eUICC/APDU از طریق AT+CSIM در این ماژول پشتیبانی نمی‌شود.");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "خطای خواندن کارت", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally { SetBusy(false); }
+    }
+
+    private static string Simplified(string response)
+    {
+        var lines = response.Replace("\r", string.Empty)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(line => !line.Equals("OK", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        return lines.Length == 0 ? "—" : string.Join(" ", lines);
+    }
+
     private bool EnsureConnected()
     {
         if (_device.IsOpen) return true;
@@ -467,6 +796,21 @@ internal sealed class MainForm : Form
         _terminal.AppendText($"[{DateTime.Now:HH:mm:ss}] > {command}\r\n{response}\r\n\r\n");
         _terminal.SelectionStart = _terminal.TextLength;
         _terminal.ScrollToCaret();
+    }
+
+    private void ExportLog()
+    {
+        if (_logView.TextLength == 0 || _logView.Text == InitialLogPlaceholder)
+            _logView.Text = SessionLogger.Redact(_terminal.Text);
+        using var dialog = new SaveFileDialog
+        {
+            Title = "ذخیره لاگ جلسه",
+            Filter = "Text|*.txt|Log|*.log",
+            FileName = $"sim800l-session-{DateTime.Now:yyyyMMdd-HHmm}.log"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        File.WriteAllText(dialog.FileName, _logView.Text);
+        _activity.Text = "لاگ ذخیره شد: " + dialog.FileName;
     }
 
     private void SetConnection(bool connected)
