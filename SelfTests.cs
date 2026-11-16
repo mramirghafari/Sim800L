@@ -249,6 +249,23 @@ internal static class SelfTests
             certificate.RenderCompact().Contains("352099001761481") && certificate.RenderCompact().Contains("۳ چرخه"));
         Check("نام فایل برگه شامل IMEI است", certificate.RenderFileName().Contains("IMEI-cert-352099001761481"));
 
+        // --- قفل IMEI روی ماژول ----------------------------------------------
+        Check("چهار فرمان قفل تعریف شده است", ImeiPolicyEnforcer.LockCommands().Count == 4);
+        Check("اولین فرمان قفل EGMR است",
+            ImeiPolicyEnforcer.LockCommands()[0].Command.StartsWith("AT+EGMR"));
+        Check("فرمان ذخیره پروفایل AT&W در فهرست قفل هست",
+            ImeiPolicyEnforcer.LockCommands().Any(c => c.Command == "AT&W"));
+
+        var holdOk = new EnforceResult("352099001761481", "352099001761481", true, true, [], "r");
+        Check("قفل زمانی معتبر است که مقدار بعد از قفل هم هدف بماند", holdOk.PolicyHolds);
+        var holdBroken = holdOk with { ImeiAfterEnforce = "490154203237518", Verified = false };
+        Check("اگر مقدار بعد از قفل عوض شود، قفل معتبر نیست", !holdBroken.PolicyHolds);
+        var holdUnlocked = holdOk with { ImeiLocked = false };
+        Check("بدون پذیرش فرمان قفل، نتیجه تأییدشده نیست", !holdUnlocked.PolicyHolds);
+
+        Check("خانواده SIMCom LTE شناسایی می‌شود", ModuleFamily.Detect("SIM7600E-H") == ModuleFamily.SimcomLte);
+        Check("SIMCom LTE مسیر اختصاصی دارد", ModuleFamily.HasVendorPath(ModuleFamily.SimcomLte));
+
         // --- محافظ AT --------------------------------------------------------
         AtGuard.ImeiWriteUnlocked = false;
         Check("فرمان معمولی AT مجاز است", AtGuard.IsAllowed("AT+CSQ", out _));

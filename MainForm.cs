@@ -52,6 +52,7 @@ internal sealed class MainForm : Form
     private string _operatorName = string.Empty;
     private string _iccidMasked = string.Empty;
     private readonly Button _certificateButton = new();
+    private readonly Button _lockImeiButton = new();
     private readonly CheckBox _deepVerify = new();
     private VerificationCertificate? _certificate;
     private int _lastPersistenceCycles;
@@ -593,7 +594,17 @@ internal sealed class MainForm : Form
         _certificateButton.Margin = new Padding(8, 2, 8, 0);
         _certificateButton.Click += async (_, _) => await GenerateCertificateAsync();
 
-        tools.Controls.AddRange([_diagnoseButton, _selfTestButton, _verifyButton, _certificateButton]);
+        _lockImeiButton.Text = "5) قفل IMEI روی ماژول";
+        _lockImeiButton.Width = 180;
+        _lockImeiButton.Height = 34;
+        _lockImeiButton.BackColor = Color.FromArgb(150, 60, 45);
+        _lockImeiButton.ForeColor = Color.White;
+        _lockImeiButton.FlatStyle = FlatStyle.Flat;
+        _lockImeiButton.FlatAppearance.BorderSize = 0;
+        _lockImeiButton.Margin = new Padding(8, 2, 8, 0);
+        _lockImeiButton.Click += async (_, _) => await LockImeiAsync();
+
+        tools.Controls.AddRange([_diagnoseButton, _selfTestButton, _verifyButton, _certificateButton, _lockImeiButton]);
         body.Controls.Add(tools, 0, 6);
 
         _writeVerdict.Text = "قفل نوشتن بسته است؛ ابتدا چک‌باکس بالا را انتخاب کنید.";
@@ -1276,6 +1287,60 @@ internal sealed class MainForm : Form
         catch (Exception ex)
         {
             AppendSimLab("خطا: " + ex.Message);
+        }
+        finally { SetBusy(false); }
+    }
+
+    private async Task LockImeiAsync()
+    {
+        if (!EnsureConnected()) return;
+        if (!_unlockWrite.Checked)
+        {
+            MessageBox.Show(this, "ابتدا قفل نوشتن را باز کنید.", "قفل است", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var target = _lastWrittenImei.Length == 15
+            ? _lastWrittenImei
+            : _targetImei?.Value ?? string.Empty;
+        if (target.Length != 15)
+        {
+            MessageBox.Show(this, "ابتدا IMEI را بنویسید یا مقدار معتبر وارد کنید؛ سپس قفل را اجرا کنید.",
+                "قفل IMEI", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var confirm = MessageBox.Show(this,
+            $"IMEI {target} روی این ماژول قفل می‌شود تا فرمان‌های بعدی نتوانند آن را تغییر دهند.\r\n\r\n" +
+            "این عمل روی خود ماژول اثر دارد، نه روی گوشی دیگری که سیم‌کارت را در آن می‌گذارید. ادامه؟",
+            "قفل IMEI روی ماژول", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (confirm != DialogResult.Yes) return;
+
+        try
+        {
+            SetBusy(true);
+            AppendWriteLog(string.Empty);
+            AppendWriteLog("— تلاش برای قفل‌کردن IMEI روی ماژول —");
+            var enforcer = new ImeiPolicyEnforcer(_device);
+            var progress = new Progress<string>(message => AppendWriteLog("» " + message));
+            var result = await enforcer.EnforceAsync(target, progress);
+
+            foreach (var line in result.Report.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries))
+                AppendWriteLog(line);
+
+            _lastPersisted = result.PolicyHolds;
+            _lastPersistenceCycles = Math.Max(_lastPersistenceCycles, 1);
+            RecordLedger("قفل IMEI", target, result.ImeiAfterEnforce, target, result.Verified, result.PolicyHolds,
+                result.ImeiLocked ? "قفل روی ماژول پذیرفته شد" : "قفل پشتیبانی نشد");
+
+            _writeVerdict.ForeColor = result.PolicyHolds ? Color.FromArgb(0, 130, 110) : Color.FromArgb(180, 62, 62);
+            _writeVerdict.Text = result.PolicyHolds
+                ? $"✅ IMEI {target} روی ماژول قفل شد و بازخوانی همان مقدار را داد."
+                : "قفل تأیید نشد؛ گزارش را ذخیره کنید (مقدار ممکن است با فرمان بعدی عوض شود).";
+        }
+        catch (Exception ex)
+        {
+            AppendWriteLog("خطای قفل IMEI: " + ex.Message);
         }
         finally { SetBusy(false); }
     }

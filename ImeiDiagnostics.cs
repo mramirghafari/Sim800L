@@ -42,6 +42,7 @@ internal static class ModuleFamily
     public const string Sim900 = "SIM900";
     public const string Sim7000 = "SIM7000";
     public const string Quectel = "Quectel";
+    public const string SimcomLte = "SIMCom-LTE";
     public const string Unknown = "نامشخص";
 
     public static string Detect(string? model)
@@ -51,7 +52,10 @@ internal static class ModuleFamily
         if (text.Contains("SIM808")) return Sim808;
         if (text.Contains("SIM800")) return Sim800L;
         if (text.Contains("SIM900")) return Sim900;
-        if (text.Contains("SIM7000") || text.Contains("SIM7080") || text.Contains("SIM7600") || text.Contains("A7670"))
+        if (text.Contains("SIM7600") || text.Contains("SIM7906") || text.Contains("SIM8200") ||
+            text.Contains("SIM8262") || text.Contains("SIM8260"))
+            return SimcomLte;
+        if (text.Contains("SIM7000") || text.Contains("SIM7080") || text.Contains("A7670") || text.Contains("SIM7600"))
             return Sim7000;
         if (text.Contains("EC2") || text.Contains("BG9") || text.Contains("M95") || text.Contains("QUECTEL"))
             return Quectel;
@@ -63,13 +67,14 @@ internal static class ModuleFamily
         Sim800L => "SIM800L: GSM/GPRS دوباند. IMEI را از RAM/فلش خودش اعلام می‌کند؛ سیم‌کارت هیچ نقشی در آن ندارد.",
         Sim808 => "SIM808: همان خانواده SIMCom با GPS داخلی. فرمان‌های IMEI مشترک است، اما برخی نسخه‌ها بعد از تغییر firmware، IMEI را ری‌ست می‌کنند؛ بعد از هر فلش، «بررسی پایداری» را دوباره اجرا کنید.",
         Sim900 => "SIM900: نسل قبلی؛ AT+EGMR روی بعضی نسخه‌ها کار می‌کند و AT+SIMEI معمولاً نه.",
-        Sim7000 => "SIM7xxx/7xxx: LTE-CAT1؛ معمولاً AT+EGMR یا AT+SIMEI پشتیبانی می‌شود و پایداری بهتر است.",
+        Sim7000 => "SIM7xxx: LTE-CAT1؛ معمولاً AT+EGMR یا AT+SIMEI پشتیبانی می‌شود و پایداری بهتر است.",
+        SimcomLte => "SIMCom LTE (SIM7600/7906/8200): مسیر AT+EGMR پایدارتر و گاهی AT+SIMEI نیز موجود است؛ بعد از فلش، پایداری را دوباره بسنجید.",
         Quectel => "Quectel: AT+QCFG=\"imei\" مسیر اختصاصی و پایدار است (نه صرفاً «امتحان»).",
         _ => "خانواده ماژول شناسایی نشد؛ ابتدا «تشخیص قابلیت‌ها» را اجرا کنید."
     };
 
     /// <summary>آیا این خانواده مسیر اختصاصی نوشتن IMEI دارد؟</summary>
-    public static bool HasVendorPath(string family) => family is Quectel or Sim7000;
+    public static bool HasVendorPath(string family) => family is Quectel or Sim7000 or SimcomLte;
 }
 
 internal sealed class ImeiDiagnostics
