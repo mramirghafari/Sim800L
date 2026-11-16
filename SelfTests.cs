@@ -273,6 +273,60 @@ internal static class SelfTests
         Check("هشدار شامل خود IMEI است",
             IdentityProof.DuplicateImeiWarning("352099001761481").Contains("352099001761481"));
 
+        // --- پروفایل سیم‌کارت ↔ IMEI ----------------------------------------
+        var tempProfiles = Path.Combine(Path.GetTempPath(), $"simprof-{Guid.NewGuid():N}.json");
+        try
+        {
+            var binder = new SimProfileBinder(tempProfiles);
+            binder.Upsert("432350466774037", "352099001761481", "490154203237518", "کارت اداری", "ایرانسل");
+
+            Check("نسبت سیم‌کارت ↔ IMEI ذخیره می‌شود",
+                binder.Find("432350466774037")?.Imei == "352099001761481");
+            Check("جست‌وجو با فاصله/خط تیره هم کار می‌کند",
+                binder.Find("432350 466774037")?.Imei == "352099001761481");
+            Check("IMEI قبلی برای بازگردانی نگه داشته می‌شود",
+                binder.Find("432350466774037")?.ImeiBefore == "490154203237518");
+
+            binder.Upsert("89610123456789012345", "490154203237518", "352099001761481", "کارت دوم", "همراه اول");
+            Check("دو سیم‌کارت مستقل ثبت می‌شوند", binder.Load().Count == 2);
+            Check("IMEI متناظر هر کارت جداگانه بازگردانده می‌شود",
+                binder.ResolveForPort("89610123456789012345")?.Imei == "490154203237518");
+
+            var dup = binder.DuplicateWarning("352099001761481", "89610123456789012345");
+            Check("IMEI تکراری بین دو سیم‌کارت هشدار می‌دهد", dup is not null && dup!.Contains("قبلاً"));
+            Check("همان سیم‌کارت هشدار تکراری نمی‌گیرد",
+                binder.DuplicateWarning("352099001761481", "432350466774037") is null);
+
+            Check("IMEI نامعتبر در پروفایل پذیرفته نمی‌شود",
+                Throws(() => binder.Upsert("432350466774037", "12345", "", "", "")));
+            Check("شناسه خالی سیم‌کارت رد می‌شود",
+                Throws(() => binder.Upsert("", "352099001761481", "", "", "")));
+
+            binder.Upsert("432350466774037", "352099001761481", "490154203237518", "به‌روزشده", "ایرانسل");
+            Check("ثبت مکرر همان کارت به‌روزرسانی می‌شود نه تکراری", binder.Load().Count == 2);
+            File.Delete(tempProfiles);
+        }
+        catch (Exception ex)
+        {
+            failures++;
+            log?.Invoke($"FAIL  پروفایل سیم‌کارت — {ex.Message}");
+        }
+
+        // --- آزمون اصالت (Quiz) ---------------------------------------------
+        const string quizImei = "352099001761481";
+        var challenge = DeviceQuiz.BuildChallenge(quizImei, new Random(1234));
+        Check("چالش آزمون ۳۵ رقمی است", challenge.Length == 35 && challenge.All(char.IsDigit));
+        var answer = DeviceQuiz.ExpectedAnswer(challenge, quizImei);
+        Check("پاسخ آزمون ۳۵ کاراکتری است", answer.Length == 35);
+        Check("پاسخ درست تأیید می‌شود",
+            DeviceQuiz.Evaluate(answer, challenge, quizImei, 3).Correct);
+        Check("پاسخ غلط رد و از تلاش کم می‌شود",
+            DeviceQuiz.Evaluate("غلط", challenge, quizImei, 3) is { Correct: false, Remaining: 2 });
+        Check("پاسخ برای IMEI دیگر معتبر نیست",
+            !DeviceQuiz.Evaluate(answer, challenge, "490154203237518", 3).Correct);
+        Check("توضیح آزمون به سامسونگ/اندروید ۱۱ اشاره می‌کند",
+            DeviceQuiz.Explain().Contains("سامسونگ"));
+
         // --- محافظ AT --------------------------------------------------------
         AtGuard.ImeiWriteUnlocked = false;
         Check("فرمان معمولی AT مجاز است", AtGuard.IsAllowed("AT+CSQ", out _));
@@ -349,6 +403,12 @@ internal static class SelfTests
 
         log?.Invoke(failures == 0 ? "همه تست‌ها موفق بود." : $"{failures} تست ناموفق بود.");
         return failures;
+    }
+
+    private static bool Throws(Action action)
+    {
+        try { action(); return false; }
+        catch { return true; }
     }
 
     /// <summary>نتیجه‌ای که ماژول را تأییدشده شبیه‌سازی می‌کند (برای تست خالص منطق گزارش).</summary>
