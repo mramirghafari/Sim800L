@@ -1,0 +1,108 @@
+using System.Text;
+
+namespace SIM800L_Flasher;
+
+internal sealed record PersistenceResult(
+    string TargetImei,
+    string ImeiBeforeRestart,
+    string ImeiAfterRestart,
+    bool RestartDetected,
+    bool Persisted,
+    string Detail)
+{
+    public bool ExpectedNeverWritten => ImeiBeforeRestart.Length != 15 && !Persisted;
+}
+
+/// <summary>
+/// تأیید پایداری IMEI: بعد از نوشتن، ماژول را نرم‌ری‌استارت می‌کند (CFUN=1,1) و می‌بیند مقدار
+/// پس از بالا آمدن دوباره همان مقدار هدف است یا نه. اگر ری‌استارت نرم ممکن نبود، از کاربر
+/// می‌خواهد برق را قطع/وصل کند و دوباره بررسی می‌کند.
+/// </summary>
+internal sealed class PersistenceVerifier
+{
+    private readonly Sim800Device _device;
+
+    public PersistenceVerifier(Sim800Device device) => _device = device;
+
+    private static async Task<string> ReadImeiAsync(Sim800Device device, CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < 25; attempt++)
+        {
+            var value = ImeiWriter.ExtractImei(await device.SendAsync("AT+GSN", 2500, ct));
+            if (value.Length == 15) return value;
+            await Task.Delay(600, ct);
+        }
+        return string.Empty;
+    }
+
+    /// <summary>ری‌استارت نرم با AT+CFUN=1,1 و سپس انتظار برای پاسخ AT.</summary>
+    public async Task<bool> SoftRestartAsync(CancellationToken ct = default)
+    {
+        await _device.SendAsync("AT+CFUN=1,1", 4000, ct);
+        await Task.Delay(2500, ct);
+
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            try
+            {
+                var response = await _device.SendAsync("AT", 2000, ct);
+                if (response.Contains("OK", StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            catch
+            {
+                // در زمان ری‌استارت، پورت می‌تواند موقتاً خطا بدهد.
+            }
+            await Task.Delay(800, ct);
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// پس از نوشتن، پایداری را بررسی می‌کند. اگر <paramref name="requireManualPowerCycle"/> درست باشد
+    /// (وقتی ری‌استارت نرم مطمئن نیست) از کاربر می‌خواهد برق را قطع/وصل کند.
+    /// </summary>
+    public async Task<PersistenceResult> VerifyAsync(
+        string target,
+        Func<bool>? waitForManualCycle = null,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        var before = await ReadImeiAsync(_device, ct);
+        progress?.Report($"IMEI پیش از ری‌استارت: {(before.Length == 15 ? before : "نامشخص")}");
+
+        var softOk = false;
+        try
+        {
+            softOk = await SoftRestartAsync(ct);
+        }
+        catch (Exception)
+        {
+            softOk = false;
+        }
+
+        if (!softOk)
+        {
+            progress?.Report("ری‌استارت نرم موفق نبود؛ منتظر قطع/وصل برق دستی هستم.");
+            waitForManualCycle?.Invoke();
+            await Task.Delay(1500, ct);
+        }
+
+        var after = await ReadImeiAsync(_device, ct);
+        var persisted = after == target;
+
+        var detail = new StringBuilder();
+        detail.AppendLine($"IMEI هدف            : {target}");
+        detail.AppendLine($"پیش از ری‌استارت     : {(before.Length == 15 ? before : "نامشخص")}");
+        detail.AppendLine($"پس از ری‌استارت      : {(after.Length == 15 ? after : "نامشخص")}");
+        detail.AppendLine($"روش ری‌استارت       : {(softOk ? "نرم (AT+CFUN=1,1)" : "برق دستی")}");
+        detail.AppendLine(persisted
+            ? "نتیجه: ✅ پایدار — IMEI جدید روی حافظه ماژول ماندگار است."
+            : before == target
+                ? "نتیجه: ⚠️ ناپایدار — مقدار در RAM نوشته شده و با ری‌استارت برگشت."
+                : after.Length != 15
+                    ? "نتیجه: ماژول بعد از ری‌استارت پاسخ نداد؛ کابل/تغذیه را بررسی و دوباره بررسی کنید."
+                    : "نتیجه: ❌ نوشتن پایدار نشد.");
+
+        return new PersistenceResult(target, before, after, softOk, persisted, detail.ToString());
+    }
+}
