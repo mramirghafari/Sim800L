@@ -161,6 +161,172 @@ internal static class SelfTests
         Check("وقتی هیچ مقداری خوانده نشده، نتیجه به‌عنوان «نوشته نشده» علامت می‌خورد",
             neverWritten.ExpectedNeverWritten);
 
+        // --- دسترسی به فایل‌های سیم‌کارت --------------------------------------
+        Check("IMEI در قالب BCD استاندارد سیم‌کارت کدگذاری می‌شود",
+            SimFileAccess.EncodeBcd("352099001761481") == "53029900711684F1");
+        Check("کدگذاری و رمزگشایی BCD دوطرفه است",
+            SimFileAccess.DecodeImei(SimFileAccess.EncodeBcd("490154203237518")) == "490154203237518");
+        Check("رمزگشایی BCD داده ناقص را رد می‌کند",
+            SimFileAccess.DecodeImei("5302990071") == string.Empty);
+        Check("داده خالی کارت خطا نمی‌دهد", SimFileAccess.DecodeImei(null) == string.Empty);
+
+        Check("وضعیت 9000 موفق خوانده می‌شود", new SimApduResult("x", 0x90, 0x00, "").IsSuccess);
+        Check("وضعیت 6982 به «نیاز به ADM» تفسیر می‌شود",
+            SimFileAccess.ClassifyWrite(new SimApduResult("x", 0x69, 0x82, "")) == SimFileAccess.AdminRequired);
+        Check("وضعیت 9804 به «نیاز به ADM» تفسیر می‌شود",
+            SimFileAccess.ClassifyWrite(new SimApduResult("x", 0x98, 0x04, "")) == SimFileAccess.AdminRequired);
+        Check("وضعیت 9404 به «فایل نیست» تفسیر می‌شود",
+            SimFileAccess.ClassifyWrite(new SimApduResult("x", 0x94, 0x04, "")) == SimFileAccess.NotFound);
+        Check("وضعیت موفق به «مجاز» تفسیر می‌شود",
+            SimFileAccess.ClassifyWrite(new SimApduResult("x", 0x90, 0x00, "")) == SimFileAccess.UpdateOk);
+        Check("توضیح «نیاز به ADM» صریح و بدون ادعای موفقیت است",
+            SimFileAccess.Explain(SimFileAccess.AdminRequired).Contains("ADM"));
+
+        // --- خانواده ماژول و دفتر IMEI ---------------------------------------
+        Check("مدل SIM808 از ATI تشخیص داده می‌شود", ModuleFamily.Detect("SIM808 R14.18") == ModuleFamily.Sim808);
+        Check("مدل SIM800L از ATI تشخیص داده می‌شود", ModuleFamily.Detect("SIM800L R14.18") == ModuleFamily.Sim800L);
+        Check("مدل Quectel از ATI تشخیص داده می‌شود", ModuleFamily.Detect("EC25-E") == ModuleFamily.Quectel);
+        Check("مدل ناشناخته صادقانه گزارش می‌شود", ModuleFamily.Detect("") == ModuleFamily.Unknown);
+        Check("Quectel مسیر اختصاصی دارد و SIM800L نه",
+            ModuleFamily.HasVendorPath(ModuleFamily.Quectel) && !ModuleFamily.HasVendorPath(ModuleFamily.Sim800L));
+        Check("توضیح SIM808 به GPS و ری‌ست بعد از فلش اشاره می‌کند",
+            ModuleFamily.Note(ModuleFamily.Sim808).Contains("GPS"));
+
+        Check("ICCID در دفتر ماسک می‌شود",
+            ImeiLedger.MaskIccid("89610123456789012345") == "8961**************45");
+        Check("ICCID خالی خطا نمی‌دهد", ImeiLedger.MaskIccid(null) == "—");
+
+        var tempLedger = Path.Combine(Path.GetTempPath(), $"ledger-{Guid.NewGuid():N}.json");
+        try
+        {
+            var ledger = new ImeiLedger(tempLedger);
+            ledger.Append(new ImeiLedgerEntry(DateTime.UtcNow, "COM4", "SIM800L", "R14.18",
+                "490154203237518", "352099001761481", "352099001761481", "AT+EGMR", true, true,
+                "ایرانسل", "8961**********45", "پایدار"));
+            ledger.Append(new ImeiLedgerEntry(DateTime.UtcNow, "COM5", "SIM808", "R14.18",
+                "111111111111111", "352099001761481", "111111111111111", "AT+SIMEI", false, false,
+                "همراه اول", "—", "خطا"));
+
+            Check("دفتر IMEI عملیات را ذخیره و بازخوانی می‌کند", ledger.Load().Count == 2);
+            Check("دفتر فقط رکورد پایدار پورت را برای بازگردانی برمی‌گرداند",
+                ledger.LastVerifiedFor("COM4")?.ImeiBefore == "490154203237518" &&
+                ledger.LastVerifiedFor("COM5") is null);
+            var export = ledger.ExportText();
+            Check("خروجی دفتر شامل IMEI قبلی و وضعیت است",
+                export.Contains("490154203237518") && export.Contains("پایدار"));
+            File.Delete(tempLedger);
+        }
+        catch (Exception ex)
+        {
+            failures++;
+            log?.Invoke($"FAIL  دفتر IMEI — {ex.Message}");
+        }
+
+        Check("توضیح جریان هویت شامل مرحله Identity Response است",
+            string.Join(" ", IdentityFlow.Stages().Select(x => x.What)).Contains("Identity Response"));
+        Check("پاسخ تعویض گوشی صریح است", IdentityFlow.AnswerSwapQuestion().Contains("IMEI خودش"));
+
+        // --- چرخه پایداری و برگه تأیید ---------------------------------------
+        var threeCycles = new PersistenceResult("352099001761481", "352099001761481", "352099001761481", true, true, "ok", 3, false);
+        Check("پایداری سه‌چرخه‌ای سطح اطمینان بالا می‌گیرد",
+            threeCycles.MultiCycle && threeCycles.Confidence.StartsWith("بالا"));
+        var oneCycle = threeCycles with { Cycles = 1 };
+        Check("پایداری یک‌چرخه‌ای فقط اطمینان متوسط دارد", !oneCycle.MultiCycle && oneCycle.Confidence.StartsWith("متوسط"));
+        var failedCycle = threeCycles with { Persisted = false };
+        Check("پایداری ناموفق هرگز اطمینان نمی‌گیرد", failedCycle.Confidence == "پایدار نشد");
+
+        var certificate = new VerificationCertificate(
+            "352099001761481", "490154203237518", "SIM800L R14.18", ModuleFamily.Sim800L,
+            "Revision:1418B05SIM800L24", "COM4", "ایرانسل", "8961**************45",
+            3, true, "AT+EGMR", new DateTime(2026, 11, 16, 9, 30, 0, DateTimeKind.Utc),
+            ["IMEI خوانده شد", "پایداری ۳ چرخه"]);
+        var rendered = certificate.Render();
+        Check("برگه تأیید شامل IMEI نهایی و مدل است",
+            rendered.Contains("352099001761481") && rendered.Contains("SIM800L"));
+        Check("برگه تأیید IMEI اولیه را برای بازگردانی نشان می‌دهد", rendered.Contains("490154203237518"));
+        Check("شماره سند برگه شامل چهار رقم آخر IMEI است", certificate.Serial.EndsWith("1481"));
+        Check("نسخه فشرده برگه قابل کپی است",
+            certificate.RenderCompact().Contains("352099001761481") && certificate.RenderCompact().Contains("۳ چرخه"));
+        Check("نام فایل برگه شامل IMEI است", certificate.RenderFileName().Contains("IMEI-cert-352099001761481"));
+
+        // --- قفل IMEI روی ماژول ----------------------------------------------
+        Check("چهار فرمان قفل تعریف شده است", ImeiPolicyEnforcer.LockCommands().Count == 4);
+        Check("اولین فرمان قفل EGMR است",
+            ImeiPolicyEnforcer.LockCommands()[0].Command.StartsWith("AT+EGMR"));
+        Check("فرمان ذخیره پروفایل AT&W در فهرست قفل هست",
+            ImeiPolicyEnforcer.LockCommands().Any(c => c.Command == "AT&W"));
+
+        var holdOk = new EnforceResult("352099001761481", "352099001761481", true, true, [], "r");
+        Check("قفل زمانی معتبر است که مقدار بعد از قفل هم هدف بماند", holdOk.PolicyHolds);
+        var holdBroken = holdOk with { ImeiAfterEnforce = "490154203237518", Verified = false };
+        Check("اگر مقدار بعد از قفل عوض شود، قفل معتبر نیست", !holdBroken.PolicyHolds);
+        var holdUnlocked = holdOk with { ImeiLocked = false };
+        Check("بدون پذیرش فرمان قفل، نتیجه تأییدشده نیست", !holdUnlocked.PolicyHolds);
+
+        Check("خانواده SIMCom LTE شناسایی می‌شود", ModuleFamily.Detect("SIM7600E-H") == ModuleFamily.SimcomLte);
+        Check("SIMCom LTE مسیر اختصاصی دارد", ModuleFamily.HasVendorPath(ModuleFamily.SimcomLte));
+
+        // --- تفکیک منبع هویت ------------------------------------------------
+        Check("هشدار IMEI تکراری، بلاک‌شدن هر دو دستگاه را ذکر می‌کند",
+            IdentityProof.DuplicateImeiWarning("352099001761481").Contains("تکراری") &&
+            IdentityProof.DuplicateImeiWarning("352099001761481").Contains("بلاک"));
+        Check("هشدار شامل خود IMEI است",
+            IdentityProof.DuplicateImeiWarning("352099001761481").Contains("352099001761481"));
+
+        // --- پروفایل سیم‌کارت ↔ IMEI ----------------------------------------
+        var tempProfiles = Path.Combine(Path.GetTempPath(), $"simprof-{Guid.NewGuid():N}.json");
+        try
+        {
+            var binder = new SimProfileBinder(tempProfiles);
+            binder.Upsert("432350466774037", "352099001761481", "490154203237518", "کارت اداری", "ایرانسل");
+
+            Check("نسبت سیم‌کارت ↔ IMEI ذخیره می‌شود",
+                binder.Find("432350466774037")?.Imei == "352099001761481");
+            Check("جست‌وجو با فاصله/خط تیره هم کار می‌کند",
+                binder.Find("432350 466774037")?.Imei == "352099001761481");
+            Check("IMEI قبلی برای بازگردانی نگه داشته می‌شود",
+                binder.Find("432350466774037")?.ImeiBefore == "490154203237518");
+
+            binder.Upsert("89610123456789012345", "490154203237518", "352099001761481", "کارت دوم", "همراه اول");
+            Check("دو سیم‌کارت مستقل ثبت می‌شوند", binder.Load().Count == 2);
+            Check("IMEI متناظر هر کارت جداگانه بازگردانده می‌شود",
+                binder.ResolveForPort("89610123456789012345")?.Imei == "490154203237518");
+
+            var dup = binder.DuplicateWarning("352099001761481", "89610123456789012345");
+            Check("IMEI تکراری بین دو سیم‌کارت هشدار می‌دهد", dup is not null && dup!.Contains("قبلاً"));
+            Check("همان سیم‌کارت هشدار تکراری نمی‌گیرد",
+                binder.DuplicateWarning("352099001761481", "432350466774037") is null);
+
+            Check("IMEI نامعتبر در پروفایل پذیرفته نمی‌شود",
+                Throws(() => binder.Upsert("432350466774037", "12345", "", "", "")));
+            Check("شناسه خالی سیم‌کارت رد می‌شود",
+                Throws(() => binder.Upsert("", "352099001761481", "", "", "")));
+
+            binder.Upsert("432350466774037", "352099001761481", "490154203237518", "به‌روزشده", "ایرانسل");
+            Check("ثبت مکرر همان کارت به‌روزرسانی می‌شود نه تکراری", binder.Load().Count == 2);
+            File.Delete(tempProfiles);
+        }
+        catch (Exception ex)
+        {
+            failures++;
+            log?.Invoke($"FAIL  پروفایل سیم‌کارت — {ex.Message}");
+        }
+
+        // --- آزمون اصالت (Quiz) ---------------------------------------------
+        const string quizImei = "352099001761481";
+        var challenge = DeviceQuiz.BuildChallenge(quizImei, new Random(1234));
+        Check("چالش آزمون ۳۵ رقمی است", challenge.Length == 35 && challenge.All(char.IsDigit));
+        var answer = DeviceQuiz.ExpectedAnswer(challenge, quizImei);
+        Check("پاسخ آزمون ۳۵ کاراکتری است", answer.Length == 35);
+        Check("پاسخ درست تأیید می‌شود",
+            DeviceQuiz.Evaluate(answer, challenge, quizImei, 3).Correct);
+        Check("پاسخ غلط رد و از تلاش کم می‌شود",
+            DeviceQuiz.Evaluate("غلط", challenge, quizImei, 3) is { Correct: false, Remaining: 2 });
+        Check("پاسخ برای IMEI دیگر معتبر نیست",
+            !DeviceQuiz.Evaluate(answer, challenge, "490154203237518", 3).Correct);
+        Check("توضیح آزمون به سامسونگ/اندروید ۱۱ اشاره می‌کند",
+            DeviceQuiz.Explain().Contains("سامسونگ"));
+
         // --- محافظ AT --------------------------------------------------------
         AtGuard.ImeiWriteUnlocked = false;
         Check("فرمان معمولی AT مجاز است", AtGuard.IsAllowed("AT+CSQ", out _));
@@ -237,6 +403,12 @@ internal static class SelfTests
 
         log?.Invoke(failures == 0 ? "همه تست‌ها موفق بود." : $"{failures} تست ناموفق بود.");
         return failures;
+    }
+
+    private static bool Throws(Action action)
+    {
+        try { action(); return false; }
+        catch { return true; }
     }
 
     /// <summary>نتیجه‌ای که ماژول را تأییدشده شبیه‌سازی می‌کند (برای تست خالص منطق گزارش).</summary>
