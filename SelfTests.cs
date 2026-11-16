@@ -335,6 +335,27 @@ internal static class SelfTests
         Check("مقدار متفاوت، پیام جداگانه می‌گیرد",
             RecognizeFailureForTest("490154203237518", "111111111111111", "352099001761481").Contains("فرق دارد"));
 
+        // --- نقشه قرض‌گیری IMEI ---------------------------------------------
+        var loaner = LoanerPlan.Build("352921101646918", "", "D0AA002301J90411189", "iPhone 18", "350782285315072");
+        Check("نقشه قرض‌گیری هرگز ادعا نمی‌کند IMEI روی سیم‌کارت ذخیره شده", !loaner.SimCarriesImei);
+        Check("گام «نوشتن روی سیم‌کارت» بی‌اثر علامت می‌خورد",
+            loaner.Steps.Any(s => s.State == LoanerStepState.NoEffect && s.Command.Contains("28542")),
+            string.Join(", ", loaner.Steps.Select(s => s.State.ToString())));
+        Check("گام نوشتن روی ماژول قابل انجام است",
+            loaner.Steps.Any(s => s.State == LoanerStepState.Actionable && s.Command.Contains("EGMR")));
+        Check("اعلام هویت توسط دستگاه مقصد در سمت دستگاه است",
+            loaner.Steps.Any(s => s.State == LoanerStepState.RequiresDeviceSideChange));
+        Check("هدف آیفون صریحاً مسیر بسته اعلام می‌شود",
+            loaner.Verdict.Contains("آیفون") && loaner.Verdict.Contains("NV"));
+        Check("هدف اندروید مسیر NV با ابزار را نام می‌برد",
+            LoanerPlan.Build("352921101646918", "", "", "Android", "350782285315072").Verdict.Contains("QPST"));
+        Check("هشدار IMEI تکراری همیشه همراه نقشه است",
+            loaner.Warning.Contains("تکراری") || loaner.Warning.Contains("دو دستگاه"));
+        Check("گزارش متنی نقشه هر سه نوع گام را نشان می‌دهد",
+            loaner.ToText().Contains("اثر واقعی") &&
+            loaner.ToText().Contains("بی‌اثر روی سیم‌کارت") &&
+            loaner.ToText().Contains("فقط در دستگاه مقصد"));
+
         // --- محافظ AT --------------------------------------------------------
         AtGuard.ImeiWriteUnlocked = false;
         Check("فرمان معمولی AT مجاز است", AtGuard.IsAllowed("AT+CSQ", out _));

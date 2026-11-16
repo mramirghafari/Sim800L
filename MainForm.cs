@@ -56,6 +56,15 @@ internal sealed class MainForm : Form
     private readonly Button _recoverButton = new();
     private readonly Button _identityProofButton = new();
     private readonly SimProfileBinder _binder = new();
+    private readonly TextBox _loanerImei = new();
+    private readonly TextBox _loanerImei2 = new();
+    private readonly TextBox _loanerSerial = new();
+    private readonly TextBox _loanerTarget = new();
+    private readonly TextBox _loanerOutput = new();
+    private readonly Label _loanerVerdict = new();
+    private readonly Button _loanerBuild = new();
+    private readonly Button _loanerApply = new();
+    private readonly Button _loanerReadSelf = new();
     private readonly TextBox _bindKey = new();
     private readonly TextBox _bindImei = new();
     private readonly TextBox _bindLabel = new();
@@ -132,6 +141,7 @@ internal sealed class MainForm : Form
         _tabs.TabPages.Add(BuildSimLab());
         _tabs.TabPages.Add(BuildLedger());
         _tabs.TabPages.Add(BuildSimProfiles());
+        _tabs.TabPages.Add(BuildLoaner());
         _tabs.TabPages.Add(BuildLogs());
         _tabs.TabPages.Add(BuildGuide());
         root.Controls.Add(_tabs, 0, 1);
@@ -1729,6 +1739,282 @@ internal sealed class MainForm : Form
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         File.WriteAllText(dialog.FileName, _ledger.ExportText());
         _activity.Text = "دفتر IMEI ذخیره شد: " + dialog.FileName;
+    }
+
+    /// <summary>
+    /// تب «قرض‌گیری IMEI»: IMEI دستگاهی که در همتا ثبت است را روی NV ماژول می‌نویسد تا خودِ
+    /// سیم‌کارت روی شبکه بالا بیاید، و همزمان صریح می‌گوید این هویت با کارت جابه‌جا نمی‌شود.
+    /// </summary>
+    private TabPage BuildLoaner()
+    {
+        var page = NewPage("قرض‌گیری IMEI");
+        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6, Padding = new Padding(16) };
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 66));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 168));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 74));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 8));
+        page.Controls.Add(body);
+
+        body.Controls.Add(new Label
+        {
+            Text = "سیم‌کارت را در دستگاه ثبت‌شده بالا می‌آوریم و IMEI همان دستگاه را روی NV ماژول می‌نویسیم. " +
+                   "این تب دقیقاً می‌گوید هر گام چه اثری دارد و کدام گام بی‌اثر است — بدون خوش‌بینی.",
+            ForeColor = Color.FromArgb(160, 72, 45),
+            BackColor = Color.FromArgb(255, 244, 232),
+            Padding = new Padding(12, 8, 12, 8),
+            Dock = DockStyle.Fill,
+            RightToLeft = RightToLeft.Yes
+        }, 0, 0);
+
+        var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 4, RightToLeft = RightToLeft.Yes };
+        for (var c = 0; c < 4; c++) grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        for (var r = 0; r < 4; r++) grid.RowStyles.Add(new RowStyle(SizeType.Percent, 25));
+        grid.Controls.Add(MakeFieldLabel("IMEI دستگاه ثبت‌شده"), 0, 0);
+        grid.Controls.Add(MakeFieldLabel("IMEI2 (اگر دو سیم دارد)"), 1, 0);
+        grid.Controls.Add(MakeFieldLabel("سریال دستگاه ثبت‌شده"), 2, 0);
+        grid.Controls.Add(MakeFieldLabel("دستگاه مقصد"), 3, 0);
+        ConfigureFieldBox(_loanerImei, "352921101646918");
+        ConfigureFieldBox(_loanerImei2, "اختیاری");
+        ConfigureFieldBox(_loanerSerial, "اختیاری");
+        ConfigureFieldBox(_loanerTarget, "iPhone 18 یا Android");
+        grid.Controls.Add(_loanerImei, 0, 1);
+        grid.Controls.Add(_loanerImei2, 1, 1);
+        grid.Controls.Add(_loanerSerial, 2, 1);
+        grid.Controls.Add(_loanerTarget, 3, 1);
+        var note = new Label
+        {
+            Text = "IMEI از NV خودِ دستگاه به شبکه اعلام می‌شود؛ سیم‌کارت فقط IMSI و کلید احراز هویت را دارد. " +
+                   "پس نوشتن روی ماژول، فقط همان ماژول را مجاز می‌کند — کارت که به گوشی برود، هویت گوشی حاکم است.",
+            ForeColor = Muted,
+            AutoSize = false,
+            Height = 46,
+            Dock = DockStyle.Fill,
+            RightToLeft = RightToLeft.Yes
+        };
+        grid.Controls.Add(note, 0, 3);
+        grid.SetColumnSpan(note, 4);
+        body.Controls.Add(grid, 0, 1);
+
+        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        _loanerBuild.Text = "ساخت نقشه گام‌به‌گام";
+        StyleAction(_loanerBuild, Accent, 185);
+        _loanerBuild.Click += (_, _) => RefreshLoanerPlan();
+
+        _loanerReadSelf.Text = "خواندن IMEI فعلی ماژول";
+        StyleAction(_loanerReadSelf, Navy, 185);
+        _loanerReadSelf.Click += async (_, _) => await ReadCurrentIntoLoanerAsync();
+
+        _loanerApply.Text = "نوشتن IMEI قرض‌دهنده روی ماژول";
+        StyleAction(_loanerApply, Color.FromArgb(180, 62, 62), 245);
+        _loanerApply.Click += async (_, _) => await ApplyLoanerImeiAsync();
+
+        actions.Controls.AddRange([_loanerBuild, _loanerReadSelf, _loanerApply]);
+        body.Controls.Add(actions, 0, 2);
+
+        _loanerOutput.Dock = DockStyle.Fill;
+        _loanerOutput.Multiline = true;
+        _loanerOutput.ReadOnly = true;
+        _loanerOutput.ScrollBars = ScrollBars.Vertical;
+        _loanerOutput.BackColor = Surface;
+        _loanerOutput.BorderStyle = BorderStyle.FixedSingle;
+        _loanerOutput.RightToLeft = RightToLeft.Yes;
+        _loanerOutput.Font = AppFonts.Ui(9.5f);
+        body.Controls.Add(_loanerOutput, 0, 3);
+
+        _loanerVerdict.Dock = DockStyle.Fill;
+        _loanerVerdict.AutoSize = false;
+        _loanerVerdict.ForeColor = Navy;
+        _loanerVerdict.BackColor = Color.FromArgb(240, 245, 252);
+        _loanerVerdict.Padding = new Padding(10, 6, 10, 6);
+        _loanerVerdict.RightToLeft = RightToLeft.Yes;
+        _loanerVerdict.Text = "برای شروع، IMEI دستگاه ثبت‌شده را وارد کن و «ساخت نقشه» را بزن.";
+        body.Controls.Add(_loanerVerdict, 0, 4);
+
+        RefreshLoanerPlan();
+        return page;
+    }
+
+    private static Label MakeFieldLabel(string text) => new()
+    {
+        Text = text,
+        AutoSize = true,
+        ForeColor = Muted,
+        Margin = new Padding(6, 6, 6, 2),
+        RightToLeft = RightToLeft.Yes
+    };
+
+    private static void ConfigureFieldBox(TextBox box, string placeholder)
+    {
+        box.PlaceholderText = placeholder;
+        box.Dock = DockStyle.Fill;
+        box.BorderStyle = BorderStyle.FixedSingle;
+        box.Margin = new Padding(6, 2, 6, 6);
+        box.RightToLeft = RightToLeft.No;
+    }
+
+    private static void StyleAction(Button button, Color color, int width)
+    {
+        button.Height = 36;
+        button.Width = width;
+        button.BackColor = color;
+        button.ForeColor = Color.White;
+        button.FlatStyle = FlatStyle.Flat;
+        button.FlatAppearance.BorderSize = 0;
+        button.Margin = new Padding(8, 4, 8, 0);
+    }
+
+    private LoanerPlan CurrentLoanerPlan() => LoanerPlan.Build(
+        NormalizeDigits(_loanerImei.Text),
+        NormalizeDigits(_loanerImei2.Text),
+        _loanerSerial.Text.Trim(),
+        _loanerTarget.Text.Trim(),
+        _lastWrittenImei.Length == 15 ? _lastWrittenImei : NormalizeDigits(_loanerImei.Text));
+
+    private static string NormalizeDigits(string input)
+    {
+        var map = new Dictionary<char, char>
+        {
+            ['۰'] = '0', ['۱'] = '1', ['۲'] = '2', ['۳'] = '3', ['۴'] = '4',
+            ['۵'] = '5', ['۶'] = '6', ['۷'] = '7', ['۸'] = '8', ['۹'] = '9'
+        };
+        var digits = new StringBuilder();
+        foreach (var ch in input)
+        {
+            if (char.IsDigit(ch)) digits.Append(char.IsAsciiDigit(ch) ? ch : map.GetValueOrDefault(ch, ch));
+        }
+        return digits.ToString();
+    }
+
+    private void RefreshLoanerPlan()
+    {
+        var plan = CurrentLoanerPlan();
+        _loanerOutput.Text = plan.ToText();
+        _loanerOutput.SelectionStart = 0;
+
+        _loanerVerdict.ForeColor = plan.ActionableCount > 0 ? Color.FromArgb(0, 130, 110) : Color.FromArgb(180, 62, 62);
+        _loanerVerdict.Text = $"گام‌های با اثر واقعی روی همین ماژول: {plan.ActionableCount}. " +
+                              "هویت با سیم‌کارت جابه‌جا نمی‌شود — جزئیات در کادر بالا.";
+        _loanerApply.Enabled = plan.LoanerImei.Length == 15;
+    }
+
+    private async Task ReadCurrentIntoLoanerAsync()
+    {
+        if (!EnsureConnected()) return;
+        try
+        {
+            SetBusy(true);
+            var writer = new ImeiWriter(_device, (command, response) => AppendWriteLog($"  {command} → {Flatten(response)}"));
+            var current = await writer.ReadImeiAsync();
+            _loanerVerdict.ForeColor = current.Length == 15 ? Color.FromArgb(0, 130, 110) : Color.FromArgb(180, 62, 62);
+            _loanerVerdict.Text = current.Length == 15
+                ? $"IMEI فعلی ماژول: {current} (این عدد چیزی است که شبکه از این ماژول می‌بیند)"
+                : "IMEI خوانده نشد؛ اتصال و تغذیه ماژول را بررسی کنید.";
+            RefreshLoanerPlan();
+        }
+        finally { SetBusy(false); }
+    }
+
+    /// <summary>
+    /// IMEI دستگاه ثبت‌شده را روی NV همین ماژول می‌نویسد (نه روی سیم‌کارت) و بعد از ری‌استارت تأیید می‌کند.
+    /// اگر firmware قبول نکند، همان سه علت را نام می‌برد؛ موفقیت بدون بازخوانی اعلام نمی‌شود.
+    /// </summary>
+    private async Task ApplyLoanerImeiAsync()
+    {
+        if (!EnsureConnected()) return;
+        if (!_unlockWrite.Checked)
+        {
+            MessageBox.Show(this, "ابتدا در تب «بررسی و نوشتن IMEI» چک‌باکس تأیید و مالکیت را بزنید.",
+                "قفل است", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var plan = CurrentLoanerPlan();
+        if (plan.LoanerImei.Length != 15)
+        {
+            MessageBox.Show(this, "IMEI دستگاه ثبت‌شده باید ۱۵ رقم باشد.", "IMEI", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        if (!ImeiNumber.TryParse(plan.LoanerImei, out _, out var error))
+        {
+            MessageBox.Show(this, $"IMEI دستگاه ثبت‌شده معتبر نیست: {error}", "IMEI", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var confirm = MessageBox.Show(this,
+            $"IMEI دستگاه ثبت‌شده ({plan.LoanerImei}) روی NV همین ماژول نوشته می‌شود، نه روی سیم‌کارت.\r\n\r\n" +
+            "این کار فقط هویت همین ماژول را عوض می‌کند. اگر کارت را در گوشی بگذاری، گوشی همان IMEI خودش را اعلام می‌کند.\r\n\r\n" +
+            "دستگاه ثبت‌شده را خاموش نگه دار تا اپراتور IMEI تکراری نبیند.\r\n\r\nادامه؟",
+            "نوشتن IMEI قرض‌دهنده روی ماژول", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (confirm != DialogResult.Yes) return;
+
+        try
+        {
+            SetBusy(true);
+            AppendWriteLog(string.Empty);
+            AppendWriteLog($"— قرض‌گیری IMEI: {plan.LoanerImei} → ماژول {_device.PortName} —");
+
+            var writer = new ImeiWriter(_device, (command, response) => AppendWriteLog($"  {command} → {Flatten(response)}"));
+            var before = await writer.ReadImeiAsync();
+            AppendWriteLog($"IMEI فعلی ماژول: {(before.Length == 15 ? before : "خوانده نشد")}");
+
+            var preferred = ImeiWriter.Strategies.FirstOrDefault(s => s.Kind == WriteStrategyKind.Simei)
+                            ?? ImeiWriter.Strategies[0];
+            var result = await writer.WriteAsync(preferred, plan.LoanerImei, before, persistProfile: true);
+            foreach (var step in result.Steps)
+                AppendWriteLog($"  [{step.Status}] {step.Command}");
+
+            var verifier = new PersistenceVerifier(_device);
+            await verifier.SoftRestartAsync();
+            var after = string.Empty;
+            for (var attempt = 0; attempt < 15; attempt++)
+            {
+                after = await writer.ReadImeiAsync();
+                if (after.Length == 15) break;
+                await Task.Delay(1000);
+            }
+            AppendWriteLog($"IMEI بعد از ری‌استارت: {(after.Length == 15 ? after : "خوانده نشد")}");
+
+            var success = after == plan.LoanerImei;
+            RecordLedger("قرض‌گیری IMEI (ماژول)", before, after, plan.LoanerImei, success, success,
+                success ? "هویت ماژول روی IMEI دستگاه ثبت‌شده تنظیم شد" : "firmware مقدار را نپذیرفت");
+
+            if (success)
+            {
+                _lastWrittenImei = after;
+                _lastPersisted = true;
+                _lastPersistenceCycles = 1;
+                _loanerVerdict.ForeColor = Color.FromArgb(0, 130, 110);
+                _loanerVerdict.Text = $"✅ ماژول حالا IMEI {after} را اعلام می‌کند و پس از ری‌استارت هم ماند. " +
+                                      "این هویت مالِ ماژول است؛ با سیم‌کارت به گوشی منتقل نمی‌شود.";
+            }
+            else if (after.Length == 15)
+            {
+                _lastPersisted = false;
+                _loanerVerdict.ForeColor = Color.FromArgb(180, 62, 62);
+                _loanerVerdict.Text = after == before
+                    ? "فرمان‌ها OK گرفتند ولی مقدار روی NV ننشست. سه علت محتمل: سهمیه AT+SIMEI تمام شده، " +
+                      "نوشتن فقط در RAM، یا IMEI در ناحیه محافظت‌شده/OTP است. «6) تلاش مجدد با ری‌استارت» را بزن."
+                    : $"مقدار به {after} تغییر کرد ولی با هدف فرق دارد؛ دفتر IMEI را بررسی کن.";
+            }
+            else
+            {
+                _lastPersisted = false;
+                _loanerVerdict.ForeColor = Color.FromArgb(180, 62, 62);
+                _loanerVerdict.Text = "ماژول بعد از ری‌استارت پاسخ نداد؛ تغذیه (۳٫۷–۴٫۲V با پیک ۲A) و کابل را بررسی کن.";
+            }
+
+            RefreshLoanerPlan();
+            await LoadSnapshotAsync();
+        }
+        catch (Exception ex)
+        {
+            AppendWriteLog("خطا: " + ex.Message);
+            _loanerVerdict.ForeColor = Color.FromArgb(180, 62, 62);
+            _loanerVerdict.Text = "خطا: " + ex.Message;
+        }
+        finally { SetBusy(false); }
     }
 
     private TabPage BuildSimProfiles()
