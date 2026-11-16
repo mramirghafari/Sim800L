@@ -356,6 +356,53 @@ internal static class SelfTests
             loaner.ToText().Contains("بی‌اثر روی سیم‌کارت") &&
             loaner.ToText().Contains("فقط در دستگاه مقصد"));
 
+        // --- هویت روی گوشی (اندروید/iOS) -------------------------------------
+        var mtk = PhoneAccessPlan.Build(
+            new PhoneIdentity(PhoneVendor.MediaTek, "Xiaomi", "SN1", "350782285315072", "", "", "13", "MOLY", false, false, false),
+            DeviceAccessKind.ServicePort, ["test"]);
+        Check("MediaTek مسیر SP Flash/Maui Meta را می‌دهد",
+            mtk.WritableOnDevice && mtk.Tools.Any(t => t.Name.Contains("SP Flash")) &&
+            mtk.Tools.Any(t => t.Name.Contains("Maui Meta")));
+        Check("MediaTek پشتیبان‌گیری NVRAM در گام‌ها آمده",
+            mtk.WriteSteps.Any(x => x.Contains("NVRAM")) && mtk.VerifySteps.Any(x => x.Contains("*#06#")));
+
+        var qcom = PhoneAccessPlan.Build(
+            new PhoneIdentity(PhoneVendor.Qualcomm, "Pixel", "SN2", "350782285315072", "", "", "14", "QCOM", false, false, false),
+            DeviceAccessKind.ServicePort, ["test"]);
+        Check("Qualcomm مسیر QPST/QXDM و NV 550 را می‌دهد",
+            qcom.WritableOnDevice && qcom.Tools.Any(t => t.Name.Contains("QPST")) &&
+            qcom.WriteSteps.Any(x => x.Contains("550")));
+        Check("Qualcomm بدون روت، پیش‌نیاز پورت DIAG را می‌گوید",
+            qcom.Verdict.Contains("DIAG") || qcom.Tools.Any(t => t.Preconditions.Contains("DIAG")));
+
+        var secure = PhoneAccessPlan.Build(
+            new PhoneIdentity(PhoneVendor.Qualcomm, "Pixel", "SN2", "", "", "", "14", "QCOM", false, false, true),
+            DeviceAccessKind.ServicePort, ["test"]);
+        Check("Secure Boot باعث حکم محتاطانه می‌شود", secure.Verdict.Contains("Secure Boot"));
+
+        var iphone = PhoneAccessPlan.Build(
+            new PhoneIdentity(PhoneVendor.Apple, "iPhone 18", "UDID", "350782285315072", "", "89049032020008884800251820547965", "18", "APPLE", false, false, true),
+            DeviceAccessKind.UserUsb, ["test"]);
+        Check("آیفون هرگز قابل نوشتن اعلام نمی‌شود", !iphone.WritableOnDevice);
+        Check("آیفون توضیح بیس‌باند امضاشده دارد",
+            iphone.IosStatement.Contains("NV") && iphone.IosStatement.Contains("Activation"));
+        Check("گزارش آیفون EID را نشان می‌دهد", iphone.ToText().Contains("89049032020008884800251820547965"));
+
+        var paths = ActivationPaths.All("iPhone 18");
+        Check("مسیر اول ارزان‌ترین است و خود دستگاه را برنمی‌گرداند",
+            paths[0].Rank == 1 && !paths[0].RestoresThisDevice);
+        Check("فقط ثبت همتا و نوشتن NV خود دستگاه را برمی‌گردانند",
+            paths.Where(p => p.RestoresThisDevice).Count() == 2 &&
+            paths.Where(p => p.RestoresThisDevice).All(p => p.Title.Contains("NV") || p.Title.Contains("همتا")));
+        Check("آیفون در جدول هزینه به‌عنوان مسیر ناممکن علامت می‌خورد",
+            paths.Any(p => p.TimeToService == "ممکن نیست" && p.RestoresThisDevice == false));
+        Check("گزارش هزینه سه بخش چطور/هزینه/پایداری دارد",
+            ActivationPaths.BuildReport("iPhone 18").Contains("چطور:") &&
+            ActivationPaths.BuildReport("iPhone 18").Contains("پایداری:"));
+
+        Check("ارقام فارسی به لاتین تبدیل می‌شوند",
+            PhoneDetector.NormalizeDigits("۳۵۲۹۲۱۱۰۱۶۴۶۹۱۸") == "352921101646918");
+
         // --- محافظ AT --------------------------------------------------------
         AtGuard.ImeiWriteUnlocked = false;
         Check("فرمان معمولی AT مجاز است", AtGuard.IsAllowed("AT+CSQ", out _));
