@@ -39,6 +39,11 @@ internal sealed class MainForm : Form
     private ImeiNumber? _targetImei;
     private TabPage? _imeiPage;
     private readonly TextBox _logView = new();
+    private readonly TextBox _simLabLog = new();
+    private readonly Label _simLabVerdict = new();
+    private readonly Button _simLabProbe = new();
+    private readonly Button _simLabWriteTest = new();
+    private readonly Button _networkProbe = new();
     private readonly CheckBox _unlockWrite = new();
     private readonly CheckBox _removeSim = new();
     private readonly CheckBox _persistProfile = new();
@@ -103,6 +108,7 @@ internal sealed class MainForm : Form
         _imeiPage = BuildImeiLab();
         _tabs.TabPages.Add(_imeiPage);
         _tabs.TabPages.Add(BuildCardProfile());
+        _tabs.TabPages.Add(BuildSimLab());
         _tabs.TabPages.Add(BuildLogs());
         _tabs.TabPages.Add(BuildGuide());
         root.Controls.Add(_tabs, 0, 1);
@@ -975,6 +981,239 @@ internal sealed class MainForm : Form
         actions.Controls.AddRange([export, clear, redact]);
         body.Controls.Add(actions, 0, 2);
         return page;
+    }
+
+    private TabPage BuildSimLab()
+    {
+        var page = NewPage("آزمایشگاه سیم‌کارت");
+        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(16) };
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 96));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        page.Controls.Add(body);
+
+        body.Controls.Add(new Label
+        {
+            Text = "آزمون واقعی نوشتن IMEI روی سیم‌کارت با AT+CRSM (READ/UPDATE BINARY). " +
+                   "بر اساس استاندارد GSM، فیلد IMEI در فایل 6F7E قرار دارد و کارت آن را با کلید ADM اپراتور قفل می‌کند؛ " +
+                   "این صفحه نتیجه واقعی کارت شما را نشان می‌دهد و اگر نوشتن ممکن نبود، صریح می‌گوید چرا — بدون ادعای بی‌پشتوانه.",
+            ForeColor = Color.FromArgb(160, 72, 45),
+            BackColor = Color.FromArgb(255, 244, 232),
+            Padding = new Padding(12, 8, 12, 8),
+            Dock = DockStyle.Fill,
+            RightToLeft = RightToLeft.Yes
+        }, 0, 0);
+
+        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        _simLabProbe.Text = "خواندن IMEI ذخیره‌شده در کارت";
+        _simLabProbe.Width = 235;
+        _simLabProbe.Height = 36;
+        _simLabProbe.BackColor = Accent;
+        _simLabProbe.ForeColor = Color.White;
+        _simLabProbe.FlatStyle = FlatStyle.Flat;
+        _simLabProbe.FlatAppearance.BorderSize = 0;
+        _simLabProbe.Margin = new Padding(8, 4, 8, 0);
+        _simLabProbe.Click += async (_, _) => await ProbeSimFilesAsync();
+
+        _simLabWriteTest.Text = "آزمون مجوز نوشتن (UPDATE)";
+        _simLabWriteTest.Width = 210;
+        _simLabWriteTest.Height = 36;
+        _simLabWriteTest.BackColor = Navy;
+        _simLabWriteTest.ForeColor = Color.White;
+        _simLabWriteTest.FlatStyle = FlatStyle.Flat;
+        _simLabWriteTest.FlatAppearance.BorderSize = 0;
+        _simLabWriteTest.Margin = new Padding(8, 4, 8, 0);
+        _simLabWriteTest.Click += async (_, _) => await ProbeSimWritePermissionAsync();
+
+        _networkProbe.Text = "آزمون هویت روی شبکه";
+        _networkProbe.Width = 190;
+        _networkProbe.Height = 36;
+        _networkProbe.BackColor = Color.FromArgb(70, 92, 125);
+        _networkProbe.ForeColor = Color.White;
+        _networkProbe.FlatStyle = FlatStyle.Flat;
+        _networkProbe.FlatAppearance.BorderSize = 0;
+        _networkProbe.Margin = new Padding(8, 4, 8, 0);
+        _networkProbe.Click += async (_, _) => await RunNetworkProbeAsync();
+
+        actions.Controls.AddRange([_simLabProbe, _simLabWriteTest, _networkProbe]);
+        body.Controls.Add(actions, 0, 1);
+
+        _simLabLog.Dock = DockStyle.Fill;
+        _simLabLog.Multiline = true;
+        _simLabLog.ReadOnly = true;
+        _simLabLog.ScrollBars = ScrollBars.Both;
+        _simLabLog.WordWrap = false;
+        _simLabLog.RightToLeft = RightToLeft.No;
+        _simLabLog.BackColor = Color.FromArgb(252, 253, 255);
+        _simLabLog.Font = new Font("Cascadia Mono", 9.5f);
+        _simLabLog.Text = "برای شروع، یکی از سه دکمه بالا را بزنید. خروجی خام AT+CRSM/AT+CSIM اینجا ثبت می‌شود.";
+        body.Controls.Add(_simLabLog, 0, 2);
+
+        var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        var save = NewActionButton("ذخیره گزارش آزمایشگاه", Color.FromArgb(70, 92, 125), 200);
+        save.Margin = new Padding(8, 2, 8, 0);
+        save.Click += (_, _) => SaveSimLabReport();
+        footer.Controls.Add(save);
+        body.Controls.Add(footer, 0, 3);
+
+        _simLabVerdict.Text = "هنوز آزمونی اجرا نشده است.";
+        _simLabVerdict.ForeColor = Muted;
+        _simLabVerdict.AutoSize = true;
+        _simLabVerdict.Dock = DockStyle.Fill;
+        _simLabVerdict.Padding = new Padding(6, 4, 6, 0);
+        _simLabVerdict.RightToLeft = RightToLeft.Yes;
+        body.Controls.Add(_simLabVerdict, 0, 4);
+        return page;
+    }
+
+    private void AppendSimLab(string line)
+    {
+        _simLabLog.AppendText(line + Environment.NewLine);
+        _simLabLog.SelectionStart = _simLabLog.TextLength;
+        _simLabLog.ScrollToCaret();
+    }
+
+    private async Task ProbeSimFilesAsync()
+    {
+        if (!EnsureConnected()) return;
+        try
+        {
+            SetBusy(true);
+            _simLabLog.Clear();
+            var files = new SimFileAccess(_device);
+            AppendSimLab("— آزمون دسترسی به سیستم فایل کارت —");
+
+            var crsm = await files.IsCrsmSupportedAsync();
+            var csim = await files.IsCsimSupportedAsync();
+            AppendSimLab($"AT+CRSM پشتیبانی می‌شود : {(crsm ? "بله" : "خیر")}");
+            AppendSimLab($"AT+CSIM پشتیبانی می‌شود : {(csim ? "بله" : "خیر")}");
+
+            if (!crsm)
+            {
+                _simLabVerdict.ForeColor = Color.FromArgb(180, 62, 62);
+                _simLabVerdict.Text = "این firmware دسترسی مستقیم به فایل‌های کارت (AT+CRSM) را نمی‌دهد. نوشتن روی کارت از این مسیر ممکن نیست.";
+                return;
+            }
+
+            var loci = await files.ReadBinaryAsync(SimFileAccess.EfLoci, 11);
+            AppendSimLab($"EF 6F7E (LOCI/IMEI): {loci.Command} → {loci.Sw1:X2}{loci.Sw2:X2} ({loci.StatusName})");
+            if (loci.Data.Length > 0) AppendSimLab($"  داده خام: {loci.Data}");
+
+            var imeiInCard = SimFileAccess.DecodeImei(loci.Data);
+            AppendSimLab($"  IMEI قابل استخراج از فیلد کارت: {(imeiInCard.Length == 15 ? imeiInCard : "ندارد / خالی")}");
+
+            var imsi = await files.ReadBinaryAsync(SimFileAccess.EfImsi, 9);
+            AppendSimLab($"EF 6F07 (IMSI)   : {imsi.Sw1:X2}{imsi.Sw2:X2} ({imsi.StatusName})");
+
+            var iccid = await files.ReadBinaryAsync(SimFileAccess.EfIccid, 10);
+            AppendSimLab($"EF 2FE2 (ICCID)  : {iccid.Sw1:X2}{iccid.Sw2:X2} ({iccid.StatusName})");
+
+            var st = await files.ReadBinaryAsync(SimFileAccess.EfServiceTable, 4);
+            AppendSimLab($"EF 6F38 (SST)    : {st.Sw1:X2}{st.Sw2:X2} ({st.StatusName})");
+
+            _simLabVerdict.ForeColor = Color.FromArgb(0, 130, 110);
+            _simLabVerdict.Text = "خواندن فایل‌های کارت انجام شد. برای دانستن امکان نوشتن، «آزمون مجوز نوشتن» را بزنید.";
+        }
+        catch (Exception ex)
+        {
+            AppendSimLab("خطا: " + ex.Message);
+        }
+        finally { SetBusy(false); }
+    }
+
+    private async Task ProbeSimWritePermissionAsync()
+    {
+        if (!EnsureConnected()) return;
+        try
+        {
+            SetBusy(true);
+            var files = new SimFileAccess(_device);
+            if (!await files.IsCrsmSupportedAsync())
+            {
+                AppendSimLab("AT+CRSM پشتیبانی نمی‌شود؛ آزمون نوشتن ممکن نیست.");
+                return;
+            }
+
+            AppendSimLab(string.Empty);
+            AppendSimLab("— آزمون مجوز UPDATE روی فایل IMEI (با همان بایت‌های فعلی، بدون تغییر داده) —");
+            var current = await files.ReadBinaryAsync(SimFileAccess.EfLoci, 11);
+            if (!current.IsSuccess || current.Data.Length == 0)
+            {
+                AppendSimLab($"فایل 6F7E خوانده نشد ({current.Sw1:X2}{current.Sw2:X2})؛ آزمون نوشتن بی‌معنی است.");
+                _simLabVerdict.ForeColor = Color.FromArgb(180, 62, 62);
+                _simLabVerdict.Text = "خواندن فایل IMEI ممکن نشد؛ نوشتن هم ممکن نیست.";
+                return;
+            }
+
+            var probe = await files.ProbeUpdateBinaryAsync(SimFileAccess.EfLoci, current.Data);
+            AppendSimLab($"{probe.Command} → {probe.Sw1:X2}{probe.Sw2:X2} ({probe.StatusName})");
+
+            var access = SimFileAccess.ClassifyWrite(probe);
+            AppendSimLab(string.Empty);
+            AppendSimLab(SimFileAccess.Explain(access, probe));
+
+            if (access == SimFileAccess.UpdateOk)
+            {
+                _simLabVerdict.ForeColor = Color.FromArgb(0, 130, 110);
+                _simLabVerdict.Text = "کارت اجازه UPDATE داد. اما توجه: این فیلد در شبکه نقشی ندارد؛ هویت واقعی از سخت‌افزار می‌آید.";
+            }
+            else
+            {
+                _simLabVerdict.ForeColor = Color.FromArgb(180, 62, 62);
+                _simLabVerdict.Text = "نتیجه واقعی: نوشتن روی کارت با AT ممکن نیست (قفل ADM اپراتور). این محدودیت کارت است، نه نرم‌افزار.";
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendSimLab("خطا: " + ex.Message);
+        }
+        finally { SetBusy(false); }
+    }
+
+    private async Task RunNetworkProbeAsync()
+    {
+        if (!EnsureConnected()) return;
+        try
+        {
+            SetBusy(true);
+            AppendSimLab(string.Empty);
+            AppendSimLab("— آزمون هویت اعلام‌شده به شبکه —");
+            var probe = new NetworkImeiProbe(_device);
+            var expected = _lastWrittenImei.Length == 15 ? _lastWrittenImei : _targetImei?.Value;
+            var result = await probe.RunAsync(expected);
+            foreach (var line in result.Lines) AppendSimLab(line);
+
+            var ok = result.ModuleImei.Length == 15 && (expected is null || result.ModuleImei == expected);
+            _simLabVerdict.ForeColor = ok ? Color.FromArgb(0, 130, 110) : Color.FromArgb(180, 62, 62);
+            _simLabVerdict.Text = ok
+                ? "هویت اعلام‌شده به شبکه با مقدار هدف یکسان است — این چیزی است که اپراتور و BTS می‌بینند."
+                : "هویت اعلام‌شده به شبکه با هدف فرق دارد؛ نوشتن پایدار نشده است.";
+        }
+        catch (Exception ex)
+        {
+            AppendSimLab("خطا: " + ex.Message);
+        }
+        finally { SetBusy(false); }
+    }
+
+    private void SaveSimLabReport()
+    {
+        if (_simLabLog.TextLength == 0)
+        {
+            MessageBox.Show(this, "هنوز گزارشی ساخته نشده است.");
+            return;
+        }
+        using var dialog = new SaveFileDialog
+        {
+            Title = "ذخیره گزارش آزمایشگاه سیم‌کارت",
+            Filter = "Text|*.txt",
+            FileName = $"sim-lab-{DateTime.Now:yyyyMMdd-HHmm}.txt"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        File.WriteAllText(dialog.FileName, SessionLogger.Redact(_simLabLog.Text));
+        _activity.Text = "گزارش آزمایشگاه ذخیره شد: " + dialog.FileName;
     }
 
     private TabPage BuildGuide()

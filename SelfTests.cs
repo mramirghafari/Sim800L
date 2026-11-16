@@ -161,6 +161,27 @@ internal static class SelfTests
         Check("وقتی هیچ مقداری خوانده نشده، نتیجه به‌عنوان «نوشته نشده» علامت می‌خورد",
             neverWritten.ExpectedNeverWritten);
 
+        // --- دسترسی به فایل‌های سیم‌کارت --------------------------------------
+        Check("IMEI در قالب BCD استاندارد سیم‌کارت کدگذاری می‌شود",
+            SimFileAccess.EncodeBcd("352099001761481") == "53029900711684F1");
+        Check("کدگذاری و رمزگشایی BCD دوطرفه است",
+            SimFileAccess.DecodeImei(SimFileAccess.EncodeBcd("490154203237518")) == "490154203237518");
+        Check("رمزگشایی BCD داده ناقص را رد می‌کند",
+            SimFileAccess.DecodeImei("5302990071") == string.Empty);
+        Check("داده خالی کارت خطا نمی‌دهد", SimFileAccess.DecodeImei(null) == string.Empty);
+
+        Check("وضعیت 9000 موفق خوانده می‌شود", new SimApduResult("x", 0x90, 0x00, "").IsSuccess);
+        Check("وضعیت 6982 به «نیاز به ADM» تفسیر می‌شود",
+            SimFileAccess.ClassifyWrite(new SimApduResult("x", 0x69, 0x82, "")) == SimFileAccess.AdminRequired);
+        Check("وضعیت 9804 به «نیاز به ADM» تفسیر می‌شود",
+            SimFileAccess.ClassifyWrite(new SimApduResult("x", 0x98, 0x04, "")) == SimFileAccess.AdminRequired);
+        Check("وضعیت 9404 به «فایل نیست» تفسیر می‌شود",
+            SimFileAccess.ClassifyWrite(new SimApduResult("x", 0x94, 0x04, "")) == SimFileAccess.NotFound);
+        Check("وضعیت موفق به «مجاز» تفسیر می‌شود",
+            SimFileAccess.ClassifyWrite(new SimApduResult("x", 0x90, 0x00, "")) == SimFileAccess.UpdateOk);
+        Check("توضیح «نیاز به ADM» صریح و بدون ادعای موفقیت است",
+            SimFileAccess.Explain(SimFileAccess.AdminRequired).Contains("ADM"));
+
         // --- محافظ AT --------------------------------------------------------
         AtGuard.ImeiWriteUnlocked = false;
         Check("فرمان معمولی AT مجاز است", AtGuard.IsAllowed("AT+CSQ", out _));
