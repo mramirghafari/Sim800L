@@ -182,6 +182,50 @@ internal static class SelfTests
         Check("توضیح «نیاز به ADM» صریح و بدون ادعای موفقیت است",
             SimFileAccess.Explain(SimFileAccess.AdminRequired).Contains("ADM"));
 
+        // --- خانواده ماژول و دفتر IMEI ---------------------------------------
+        Check("مدل SIM808 از ATI تشخیص داده می‌شود", ModuleFamily.Detect("SIM808 R14.18") == ModuleFamily.Sim808);
+        Check("مدل SIM800L از ATI تشخیص داده می‌شود", ModuleFamily.Detect("SIM800L R14.18") == ModuleFamily.Sim800L);
+        Check("مدل Quectel از ATI تشخیص داده می‌شود", ModuleFamily.Detect("EC25-E") == ModuleFamily.Quectel);
+        Check("مدل ناشناخته صادقانه گزارش می‌شود", ModuleFamily.Detect("") == ModuleFamily.Unknown);
+        Check("Quectel مسیر اختصاصی دارد و SIM800L نه",
+            ModuleFamily.HasVendorPath(ModuleFamily.Quectel) && !ModuleFamily.HasVendorPath(ModuleFamily.Sim800L));
+        Check("توضیح SIM808 به GPS و ری‌ست بعد از فلش اشاره می‌کند",
+            ModuleFamily.Note(ModuleFamily.Sim808).Contains("GPS"));
+
+        Check("ICCID در دفتر ماسک می‌شود",
+            ImeiLedger.MaskIccid("89610123456789012345") == "8961**************45");
+        Check("ICCID خالی خطا نمی‌دهد", ImeiLedger.MaskIccid(null) == "—");
+
+        var tempLedger = Path.Combine(Path.GetTempPath(), $"ledger-{Guid.NewGuid():N}.json");
+        try
+        {
+            var ledger = new ImeiLedger(tempLedger);
+            ledger.Append(new ImeiLedgerEntry(DateTime.UtcNow, "COM4", "SIM800L", "R14.18",
+                "490154203237518", "352099001761481", "352099001761481", "AT+EGMR", true, true,
+                "ایرانسل", "8961**********45", "پایدار"));
+            ledger.Append(new ImeiLedgerEntry(DateTime.UtcNow, "COM5", "SIM808", "R14.18",
+                "111111111111111", "352099001761481", "111111111111111", "AT+SIMEI", false, false,
+                "همراه اول", "—", "خطا"));
+
+            Check("دفتر IMEI عملیات را ذخیره و بازخوانی می‌کند", ledger.Load().Count == 2);
+            Check("دفتر فقط رکورد پایدار پورت را برای بازگردانی برمی‌گرداند",
+                ledger.LastVerifiedFor("COM4")?.ImeiBefore == "490154203237518" &&
+                ledger.LastVerifiedFor("COM5") is null);
+            var export = ledger.ExportText();
+            Check("خروجی دفتر شامل IMEI قبلی و وضعیت است",
+                export.Contains("490154203237518") && export.Contains("پایدار"));
+            File.Delete(tempLedger);
+        }
+        catch (Exception ex)
+        {
+            failures++;
+            log?.Invoke($"FAIL  دفتر IMEI — {ex.Message}");
+        }
+
+        Check("توضیح جریان هویت شامل مرحله Identity Response است",
+            string.Join(" ", IdentityFlow.Stages().Select(x => x.What)).Contains("Identity Response"));
+        Check("پاسخ تعویض گوشی صریح است", IdentityFlow.AnswerSwapQuestion().Contains("IMEI خودش"));
+
         // --- محافظ AT --------------------------------------------------------
         AtGuard.ImeiWriteUnlocked = false;
         Check("فرمان معمولی AT مجاز است", AtGuard.IsAllowed("AT+CSQ", out _));

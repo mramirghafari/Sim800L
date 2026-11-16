@@ -19,11 +19,57 @@ internal sealed record CapabilityReport(
     WriteStrategy? RecommendedStrategy,
     string RawLog)
 {
+    /// <summary>خانواده ماژول از پاسخ ATI (SIM800L / SIM808 / SIM900 / SIM7600 / Quectel).</summary>
+    public string Family => ModuleFamily.Detect(Model);
+
+    public string FamilyNote => ModuleFamily.Note(Family);
+
     public bool AnyWritePath => EgmrWritable || SimeiSupported;
 
     public string Recommendation => RecommendedStrategy is null
         ? "هیچ مسیر نوشتن AT روی این firmware پیدا نشد؛ گزینه باقی‌مانده فلش بسته اختصاصی همین revision است."
         : $"پیشنهاد: «{RecommendedStrategy.Title}» را انتخاب و اجرا کنید.";
+}
+
+/// <summary>
+/// تشخیص خانواده ماژول و توضیح تفاوت رفتاری مهم آن‌ها. SIM800L و SIM808 فرمان‌های AT مشترک دارند،
+/// اما SIM808 رادیو GPS هم دارد و در بعضی نسخه‌ها فضای NV متفاوتی دارد؛ برای همین باید صریح گزارش شود.
+/// </summary>
+internal static class ModuleFamily
+{
+    public const string Sim800L = "SIM800L";
+    public const string Sim808 = "SIM808";
+    public const string Sim900 = "SIM900";
+    public const string Sim7000 = "SIM7000";
+    public const string Quectel = "Quectel";
+    public const string Unknown = "نامشخص";
+
+    public static string Detect(string? model)
+    {
+        if (string.IsNullOrWhiteSpace(model)) return Unknown;
+        var text = model.ToUpperInvariant();
+        if (text.Contains("SIM808")) return Sim808;
+        if (text.Contains("SIM800")) return Sim800L;
+        if (text.Contains("SIM900")) return Sim900;
+        if (text.Contains("SIM7000") || text.Contains("SIM7080") || text.Contains("SIM7600") || text.Contains("A7670"))
+            return Sim7000;
+        if (text.Contains("EC2") || text.Contains("BG9") || text.Contains("M95") || text.Contains("QUECTEL"))
+            return Quectel;
+        return Unknown;
+    }
+
+    public static string Note(string family) => family switch
+    {
+        Sim800L => "SIM800L: GSM/GPRS دوباند. IMEI را از RAM/فلش خودش اعلام می‌کند؛ سیم‌کارت هیچ نقشی در آن ندارد.",
+        Sim808 => "SIM808: همان خانواده SIMCom با GPS داخلی. فرمان‌های IMEI مشترک است، اما برخی نسخه‌ها بعد از تغییر firmware، IMEI را ری‌ست می‌کنند؛ بعد از هر فلش، «بررسی پایداری» را دوباره اجرا کنید.",
+        Sim900 => "SIM900: نسل قبلی؛ AT+EGMR روی بعضی نسخه‌ها کار می‌کند و AT+SIMEI معمولاً نه.",
+        Sim7000 => "SIM7xxx/7xxx: LTE-CAT1؛ معمولاً AT+EGMR یا AT+SIMEI پشتیبانی می‌شود و پایداری بهتر است.",
+        Quectel => "Quectel: AT+QCFG=\"imei\" مسیر اختصاصی و پایدار است (نه صرفاً «امتحان»).",
+        _ => "خانواده ماژول شناسایی نشد؛ ابتدا «تشخیص قابلیت‌ها» را اجرا کنید."
+    };
+
+    /// <summary>آیا این خانواده مسیر اختصاصی نوشتن IMEI دارد؟</summary>
+    public static bool HasVendorPath(string family) => family is Quectel or Sim7000;
 }
 
 internal sealed class ImeiDiagnostics
@@ -84,6 +130,9 @@ internal sealed class ImeiDiagnostics
         // آزمون پذیرش SIMEI با مقدار فعلی نفس IMEI هم انجام نمی‌شود مگر پشتیبانی خواندن ثابت شود،
         // چون تعداد نوشتن SIMEI محدود است و نباید هدر برود.
         var simeiHasQuota = simeiSupported && simeiRead.Contains("1", StringComparison.Ordinal);
+
+        var family = ModuleFamily.Detect(model);
+        findings.Add($"خانواده تشخیص‌داده‌شده: {family} — {ModuleFamily.Note(family)}");
 
         if (!egmrReadable)
             findings.Add("AT+EGMR=0,7 پاسخ معتبری نداد؛ مسیر EGMR روی این firmware وجود ندارد یا فرمت متفاوت است.");

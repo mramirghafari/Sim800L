@@ -44,6 +44,13 @@ internal sealed class MainForm : Form
     private readonly Button _simLabProbe = new();
     private readonly Button _simLabWriteTest = new();
     private readonly Button _networkProbe = new();
+    private readonly Button _identityFlowButton = new();
+    private readonly TextBox _ledgerView = new();
+    private readonly ImeiLedger _ledger = new();
+    private string _moduleModel = string.Empty;
+    private string _moduleRevision = string.Empty;
+    private string _operatorName = string.Empty;
+    private string _iccidMasked = string.Empty;
     private readonly CheckBox _unlockWrite = new();
     private readonly CheckBox _removeSim = new();
     private readonly CheckBox _persistProfile = new();
@@ -109,6 +116,7 @@ internal sealed class MainForm : Form
         _tabs.TabPages.Add(_imeiPage);
         _tabs.TabPages.Add(BuildCardProfile());
         _tabs.TabPages.Add(BuildSimLab());
+        _tabs.TabPages.Add(BuildLedger());
         _tabs.TabPages.Add(BuildLogs());
         _tabs.TabPages.Add(BuildGuide());
         root.Controls.Add(_tabs, 0, 1);
@@ -786,6 +794,9 @@ internal sealed class MainForm : Form
                 current = outcome.Success?.ImeiAfter ?? outcome.ImeiBefore;
                 _writeLog.Text = outcome.Report;
                 verifiedByReadback = outcome.Success is not null;
+                RecordLedger(outcome.Success?.Strategy.Title ?? "خودکار (ناموفق)",
+                    outcome.ImeiBefore, current, target, verifiedByReadback, false,
+                    verifiedByReadback ? "در انتظار بررسی پایداری" : "هیچ استراتژی شناسه را تغییر نداد");
                 FinishWrite(verifiedByReadback, outcome.Success?.Strategy.Title ?? "—", outcome.ImeiBefore, current, target);
             }
             else
@@ -796,6 +807,8 @@ internal sealed class MainForm : Form
                 current = result.ImeiAfter;
                 _writeLog.Text = ImeiWriter.BuildReport([result], result.Verified ? result : null, before, target);
                 verifiedByReadback = result.Verified;
+                RecordLedger(strategy.Title, before, current, target, verifiedByReadback, false,
+                    verifiedByReadback ? "در انتظار بررسی پایداری" : result.Summary);
                 FinishWrite(result.Verified, strategy.Title, before, current, target);
             }
 
@@ -810,6 +823,10 @@ internal sealed class MainForm : Form
                     AppendWriteLog(line);
 
                 _lastWrittenImei = persistence.Persisted ? target : persistence.ImeiAfterRestart;
+                RecordLedger("بررسی پایداری (ری‌استارت)", persistence.ImeiBeforeRestart, persistence.ImeiAfterRestart,
+                    target, persistence.Persisted, persistence.Persisted,
+                    persistence.Persisted ? "پایدار شد و بعد از ری‌استارت ماند" :
+                    persistence.RestartDetected ? "بعد از ری‌استارت برگشت (ناپایدار)" : "ری‌استارت نرم انجام نشد");
                 _writeVerdict.ForeColor = persistence.Persisted ? Color.FromArgb(0, 130, 110) : Color.FromArgb(180, 62, 62);
                 _writeVerdict.Text = persistence.Persisted
                     ? $"✅ تضمین عملی: IMEI {target} نوشته شد و بعد از ری‌استارت هم پایدار ماند."
@@ -837,6 +854,31 @@ internal sealed class MainForm : Form
             _writeCts = null;
             SetBusy(false);
             _writeButton.Enabled = _unlockWrite.Checked;
+        }
+    }
+
+    private void RecordLedger(string strategyTitle, string before, string after, string target, bool verified, bool persisted, string notes = "")
+    {
+        try
+        {
+            _ledger.Append(new ImeiLedgerEntry(
+                DateTime.UtcNow,
+                _device.PortName,
+                _moduleModel.Length > 0 ? _moduleModel : ModuleFamily.Unknown,
+                _moduleRevision,
+                before,
+                target,
+                after,
+                strategyTitle,
+                verified,
+                persisted,
+                _operatorName,
+                _iccidMasked,
+                notes));
+        }
+        catch (Exception ex)
+        {
+            _activity.Text = "ثبت در دفتر IMEI ناموفق بود: " + ex.Message;
         }
     }
 
@@ -1037,7 +1079,17 @@ internal sealed class MainForm : Form
         _networkProbe.Margin = new Padding(8, 4, 8, 0);
         _networkProbe.Click += async (_, _) => await RunNetworkProbeAsync();
 
-        actions.Controls.AddRange([_simLabProbe, _simLabWriteTest, _networkProbe]);
+        _identityFlowButton.Text = "سیم‌کارت واسطه IMEI هست؟";
+        _identityFlowButton.Width = 200;
+        _identityFlowButton.Height = 36;
+        _identityFlowButton.BackColor = Color.FromArgb(70, 92, 125);
+        _identityFlowButton.ForeColor = Color.White;
+        _identityFlowButton.FlatStyle = FlatStyle.Flat;
+        _identityFlowButton.FlatAppearance.BorderSize = 0;
+        _identityFlowButton.Margin = new Padding(8, 4, 8, 0);
+        _identityFlowButton.Click += (_, _) => ShowIdentityFlow();
+
+        actions.Controls.AddRange([_simLabProbe, _simLabWriteTest, _networkProbe, _identityFlowButton]);
         body.Controls.Add(actions, 0, 1);
 
         _simLabLog.Dock = DockStyle.Fill;
@@ -1198,6 +1250,17 @@ internal sealed class MainForm : Form
         finally { SetBusy(false); }
     }
 
+    private void ShowIdentityFlow()
+    {
+        _simLabLog.Clear();
+        foreach (var line in IdentityFlow.Explain().Split(Environment.NewLine))
+            AppendSimLab(line);
+        AppendSimLab(string.Empty);
+        AppendSimLab("پاسخ کوتاه: " + IdentityFlow.AnswerSwapQuestion());
+        _simLabVerdict.ForeColor = Color.FromArgb(160, 72, 45);
+        _simLabVerdict.Text = "IMEI فقط روی دستگاهی که سیم‌کارت داخلش است، به شبکه اعلام می‌شود.";
+    }
+
     private void SaveSimLabReport()
     {
         if (_simLabLog.TextLength == 0)
@@ -1214,6 +1277,72 @@ internal sealed class MainForm : Form
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         File.WriteAllText(dialog.FileName, SessionLogger.Redact(_simLabLog.Text));
         _activity.Text = "گزارش آزمایشگاه ذخیره شد: " + dialog.FileName;
+    }
+
+    private TabPage BuildLedger()
+    {
+        var page = NewPage("دفتر IMEI");
+        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(16) };
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+        page.Controls.Add(body);
+
+        body.Controls.Add(new Label
+        {
+            Text = "هر عملیات نوشتن با IMEI قبلی، مدل ماژول، نسخه firmware و نتیجه پایداری ثبت می‌شود. " +
+                   "اگر دستگاهی بعداً مشکل پیدا کرد، از همین‌جا مقدار اولیه را برای بازگردانی بردارید. ICCID ماسک می‌شود.",
+            ForeColor = Color.FromArgb(160, 72, 45),
+            BackColor = Color.FromArgb(255, 244, 232),
+            Padding = new Padding(12, 8, 12, 8),
+            Dock = DockStyle.Fill,
+            RightToLeft = RightToLeft.Yes
+        }, 0, 0);
+
+        _ledgerView.Dock = DockStyle.Fill;
+        _ledgerView.Multiline = true;
+        _ledgerView.ReadOnly = true;
+        _ledgerView.ScrollBars = ScrollBars.Both;
+        _ledgerView.WordWrap = false;
+        _ledgerView.RightToLeft = RightToLeft.No;
+        _ledgerView.BackColor = Color.White;
+        _ledgerView.Font = new Font("Cascadia Mono", 9f);
+        body.Controls.Add(_ledgerView, 0, 1);
+
+        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        var reload = NewActionButton("بازخوانی دفتر", Accent, 150);
+        reload.Margin = new Padding(8, 2, 8, 0);
+        reload.Click += (_, _) => ReloadLedger();
+        var export = NewActionButton("ذخیره متن دفتر", Color.FromArgb(70, 92, 125), 170);
+        export.Margin = new Padding(8, 2, 8, 0);
+        export.Click += (_, _) => ExportLedger();
+        var open = NewActionButton("محل فایل", Navy, 120);
+        open.Margin = new Padding(8, 2, 8, 0);
+        open.Click += (_, _) => MessageBox.Show(this, _ledger.FilePath, "مسیر دفتر", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        actions.Controls.AddRange([reload, export, open]);
+        body.Controls.Add(actions, 0, 2);
+
+        ReloadLedger();
+        return page;
+    }
+
+    private void ReloadLedger()
+    {
+        var text = _ledger.ExportText();
+        _ledgerView.Text = text.Replace(Environment.NewLine, "\r\n");
+    }
+
+    private void ExportLedger()
+    {
+        using var dialog = new SaveFileDialog
+        {
+            Title = "ذخیره دفتر IMEI",
+            Filter = "Text|*.txt|JSON|*.json",
+            FileName = $"imei-ledger-{DateTime.Now:yyyyMMdd-HHmm}.txt"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        File.WriteAllText(dialog.FileName, _ledger.ExportText());
+        _activity.Text = "دفتر IMEI ذخیره شد: " + dialog.FileName;
     }
 
     private TabPage BuildGuide()
@@ -1563,6 +1692,10 @@ internal sealed class MainForm : Form
             SetBusy(true);
             var progress = new Progress<string>(command => _activity.Text = "در حال اجرا: " + command);
             var data = await _device.ReadSnapshotAsync(progress);
+            _moduleModel = data.Model;
+            _moduleRevision = data.Revision;
+            _operatorName = data.OperatorName;
+            _iccidMasked = ImeiLedger.MaskIccid(data.Iccid);
             _values["model"].Text = data.Model;
             _values["revision"].Text = data.Revision;
             _values["imei"].Text = data.Imei;

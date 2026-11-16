@@ -75,7 +75,7 @@ internal sealed class ImeiWriter
             "qcfg",
             "4) AT+QCFG (مخصوص Quectel — فقط برای امتحان)",
             ["AT+QCFG=\"imei\",1", "AT+QCFG=\"imei\",\"{IMEI}\"", "AT+QCFG=\"imei\",2"],
-            "این فرمان متعلق به Quectel است؛ روی SIM800L تقریباً همیشه ERROR می‌دهد و آسیبی هم نمی‌زند.",
+            "مسیر اختصاصی Quectel: روی ماژول‌های Quectel/SIM7xxx پایدار است، روی SIM800L/SIM808 تقریباً همیشه ERROR می‌دهد.",
             QuectelOnly: true)
     ];
 
