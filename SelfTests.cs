@@ -327,6 +327,14 @@ internal static class SelfTests
         Check("توضیح آزمون به سامسونگ/اندروید ۱۱ اشاره می‌کند",
             DeviceQuiz.Explain().Contains("سامسونگ"));
 
+        // --- تشخیص علت شکست ------------------------------------------------
+        Check("پاسخ ندادن ماژول به مسئله تغذیه نسبت داده می‌شود",
+            RecognizeFailureForTest("490154203237518", "", "352099001761481").Contains("تغذیه"));
+        Check("OK بدون تغییر، سه علت محتمل را فهرست می‌کند",
+            RecognizeFailureForTest("490154203237518", "490154203237518", "352099001761481").Contains("سهمیه"));
+        Check("مقدار متفاوت، پیام جداگانه می‌گیرد",
+            RecognizeFailureForTest("490154203237518", "111111111111111", "352099001761481").Contains("فرق دارد"));
+
         // --- محافظ AT --------------------------------------------------------
         AtGuard.ImeiWriteUnlocked = false;
         Check("فرمان معمولی AT مجاز است", AtGuard.IsAllowed("AT+CSQ", out _));
@@ -403,6 +411,15 @@ internal static class SelfTests
 
         log?.Invoke(failures == 0 ? "همه تست‌ها موفق بود." : $"{failures} تست ناموفق بود.");
         return failures;
+    }
+
+    /// <summary>هم‌ارز منطق تشخیص علت شکست در MainForm (برای تست بدون UI).</summary>
+    private static string RecognizeFailureForTest(string before, string after, string target)
+    {
+        if (after.Length != 15) return "تغذیه";
+        if (after == target) return "موفق";
+        if (after == before) return "سهمیه AT+SIMEI یا NV یا OTP";
+        return "فرق دارد";
     }
 
     private static bool Throws(Action action)

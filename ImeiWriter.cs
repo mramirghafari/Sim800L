@@ -81,6 +81,10 @@ internal sealed class ImeiWriter
 
     private readonly Sim800Device _device;
     private readonly Action<string, string>? _log;
+    private bool _restartPending;
+
+    /// <summary>آیا بعد از نوشتن هنوز ری‌استارت لازم است؟</summary>
+    public bool RestartPending => _restartPending;
 
     public ImeiWriter(Sim800Device device, Action<string, string>? log = null)
     {
@@ -130,6 +134,31 @@ internal sealed class ImeiWriter
         progress?.Report($"خودآزمون «{strategy.Title}» با IMEI فعلی ({current}) — بدون تغییر واقعی.");
         var result = await WriteAsync(strategy, current, current, persistProfile: false, progress, ct);
         return result;
+    }
+
+    /// <summary>پاک‌کردن بافر ورودی و خواندن IMEI؛ برای جلوگیری از تداخل پاسخ‌های معوق.</summary>
+    private async Task<string> ReadImeiDeferredAsync(CancellationToken ct)
+    {
+        await Task.Delay(400, ct);
+        var value = await ReadImeiAsync(ct);
+        if (value.Length == 15) return value;
+
+        // تلاش دوم با AT+CGSN (بعضی firmwareها فقط یکی از این دو را پاسخ می‌دهند).
+        return ImeiWriter.ExtractImei(await _device.SendAsync("AT+CGSN", 2500, ct));
+    }
+
+    /// <summary>ری‌استارت نرم و خواندن IMEI پس از بالا آمدن.</summary>
+    private async Task<string> RestartAndReadAsync(CancellationToken ct)
+    {
+        try
+        {
+            await _device.SendAsync("AT+CFUN=1,1", 4000, ct);
+        }
+        catch
+        {
+            // پورت در زمان ری‌استارت می‌تواند خطا بدهد؛ مهم نیست.
+        }
+        return await ReadImeiAfterRestartAsync(8, ct);
     }
 
     public async Task<string> ReadImeiAsync(CancellationToken ct = default)
@@ -198,11 +227,21 @@ internal sealed class ImeiWriter
         var needsRestart = strategy.Kind is WriteStrategyKind.CfwToggle or WriteStrategyKind.QcfgQuectel ||
                            steps.Any(s => s.Command.StartsWith("AT+CFUN=1", StringComparison.OrdinalIgnoreCase));
 
-        var imeiAfter = needsRestart
-            ? await ReadImeiAfterRestartAsync(8, ct)
-            : await ReadImeiAsync(ct);
+        // بازخوانی فوری: پورت را پاک می‌کنیم تا پاسخ‌های معوق (OK/URC) با پاسخ AT+GSN قاطی نشوند.
+        var imeiAfter = await ReadImeiDeferredAsync(ct);
 
-        if (imeiAfter.Length != 15) imeiAfter = await ReadImeiAfterRestartAsync(4, ct);
+        // حتی اگر تغییر دیده نشد، بعد از ری‌استارت یک بار دیگر بخوان؛ بعضی firmwareها
+        // مقدار را فقط هنگام بوت از NV می‌خوانند.
+        if (imeiAfter != imei && imeiBefore.Length == 15)
+        {
+            _restartPending = true;
+            var afterRestart = needsRestart
+                ? await ReadImeiAfterRestartAsync(8, ct)
+                : await RestartAndReadAsync(ct);
+            if (afterRestart.Length == 15) imeiAfter = afterRestart;
+        }
+
+        if (imeiAfter.Length == 15) _restartPending = false;
 
         var verified = imeiAfter == imei;
         var summary = verified

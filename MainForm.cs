@@ -53,6 +53,7 @@ internal sealed class MainForm : Form
     private string _iccidMasked = string.Empty;
     private readonly Button _certificateButton = new();
     private readonly Button _lockImeiButton = new();
+    private readonly Button _recoverButton = new();
     private readonly Button _identityProofButton = new();
     private readonly SimProfileBinder _binder = new();
     private readonly TextBox _bindKey = new();
@@ -612,7 +613,17 @@ internal sealed class MainForm : Form
         _lockImeiButton.Margin = new Padding(8, 2, 8, 0);
         _lockImeiButton.Click += async (_, _) => await LockImeiAsync();
 
-        tools.Controls.AddRange([_diagnoseButton, _selfTestButton, _verifyButton, _certificateButton, _lockImeiButton]);
+        _recoverButton.Text = "6) تلاش مجدد با ری‌استارت";
+        _recoverButton.Width = 200;
+        _recoverButton.Height = 34;
+        _recoverButton.BackColor = Color.FromArgb(70, 92, 125);
+        _recoverButton.ForeColor = Color.White;
+        _recoverButton.FlatStyle = FlatStyle.Flat;
+        _recoverButton.FlatAppearance.BorderSize = 0;
+        _recoverButton.Margin = new Padding(8, 2, 8, 0);
+        _recoverButton.Click += async (_, _) => await RecoverWriteAsync();
+
+        tools.Controls.AddRange([_diagnoseButton, _selfTestButton, _verifyButton, _certificateButton, _lockImeiButton, _recoverButton]);
         body.Controls.Add(tools, 0, 6);
 
         _writeVerdict.Text = "قفل نوشتن بسته است؛ ابتدا چک‌باکس بالا را انتخاب کنید.";
@@ -1307,6 +1318,119 @@ internal sealed class MainForm : Form
             AppendSimLab("خطا: " + ex.Message);
         }
         finally { SetBusy(false); }
+    }
+
+    /// <summary>
+    /// وقتی ماژول به AT+SIMEI/AT+EGMR پاسخ OK می‌دهد اما مقدار عوض نمی‌شود، سه علت رایج وجود دارد:
+    /// ۱) سهمیه نوشتن تمام شده، ۲) مقدار فقط در RAM نوشته شده و به NV نرفته، ۳) firmware نیاز به
+    /// ری‌استارت کامل (یا قطع برق) دارد. این متد هر سه را امتحان می‌کند و نتیجه واقعی را می‌گوید.
+    /// </summary>
+    private async Task RecoverWriteAsync()
+    {
+        if (!EnsureConnected()) return;
+        if (!_unlockWrite.Checked)
+        {
+            MessageBox.Show(this, "ابتدا قفل نوشتن را باز کنید.", "قفل است", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        if (!_targetImei.HasValue)
+        {
+            ValidateImeiInput();
+            if (!_targetImei.HasValue)
+            {
+                MessageBox.Show(this, "IMEI هدف معتبر نیست.", "IMEI", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+        }
+
+        var confirm = MessageBox.Show(this,
+            "این مرحله برای وقتی است که فرمان‌ها OK می‌گیرند اما IMEI عوض نمی‌شود.\r\n\r\n" +
+            "ترتیب کار: نوشتن مجدد → ذخیره AT&W → ری‌استارت سخت (CFUN=1,1) → بازخوانی.\r\n" +
+            "توجه: AT+SIMEI سهمیه محدودی دارد (معمولاً ۳ بار). ادامه؟",
+            "تلاش مجدد با ری‌استارت", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (confirm != DialogResult.Yes) return;
+
+        var target = _targetImei!.Value.Value;
+        try
+        {
+            SetBusy(true);
+            AppendWriteLog(string.Empty);
+            AppendWriteLog("— تلاش مجدد با ری‌استارت سخت —");
+
+            var writer = new ImeiWriter(_device, (command, response) => AppendWriteLog($"  {command} → {Flatten(response)}"));
+            var before = await writer.ReadImeiAsync();
+            AppendWriteLog($"IMEI قبل از تلاش: {(before.Length == 15 ? before : "خوانده نشد")}");
+
+            var strategy = _strategyPicker.SelectedIndex > 0
+                ? ImeiWriter.Strategies[_strategyPicker.SelectedIndex - 1]
+                : _capabilities?.RecommendedStrategy ?? ImeiWriter.Strategies[0];
+
+            var result = await writer.WriteAsync(strategy, target, before, persistProfile: true);
+            foreach (var step in result.Steps)
+                AppendWriteLog($"  [{step.Status}] {step.Command}");
+
+            // ری‌استارت سخت و بازخوانی با انتظار طولانی‌تر
+            AppendWriteLog("ری‌استارت سخت ماژول (AT+CFUN=1,1) و انتظار برای ثبت مجدد شبکه…");
+            try { await _device.SendAsync("AT+CFUN=1,1", 4000); } catch { }
+            await Task.Delay(6000);
+
+            var after = string.Empty;
+            for (var attempt = 0; attempt < 15; attempt++)
+            {
+                after = await writer.ReadImeiAsync();
+                if (after.Length == 15) break;
+                await Task.Delay(1000);
+            }
+
+            AppendWriteLog($"IMEI بعد از ری‌استارت: {(after.Length == 15 ? after : "خوانده نشد")}");
+            var success = after == target;
+
+            RecordLedger("تلاش مجدد با ری‌استارت", before, after, target, success, success,
+                success ? "با ری‌استارت پایدار شد" : "همچنان اعمال نشد");
+
+            if (success)
+            {
+                _lastWrittenImei = after;
+                _lastPersisted = true;
+                _lastPersistenceCycles = 1;
+                _writeVerdict.ForeColor = Color.FromArgb(0, 130, 110);
+                _writeVerdict.Text = $"✅ موفق شد — IMEI {after} بعد از ری‌استارت سخت هم ماند. حالا «5) قفل IMEI» را بزن و برگه تأیید بگیر.";
+                AppendWriteLog("✅ نتیجه: ری‌استارت سخت مشکل را حل کرد.");
+            }
+            else
+            {
+                _lastPersisted = false;
+                _writeVerdict.ForeColor = Color.FromArgb(180, 62, 62);
+                _writeVerdict.Text = RecognizeFailure(before, after, target);
+                AppendWriteLog("❌ نتیجه: " + RecognizeFailure(before, after, target));
+            }
+
+            await LoadSnapshotAsync();
+        }
+        catch (Exception ex)
+        {
+            AppendWriteLog("خطا: " + ex.Message);
+        }
+        finally { SetBusy(false); }
+    }
+
+    /// <summary>تشخیص علت واقعی از روی رفتار ماژول — تا حدس نزنیم.</summary>
+    private string RecognizeFailure(string before, string after, string target)
+    {
+        if (after.Length != 15)
+            return "ماژول بعد از ری‌استارت پاسخ نمی‌دهد؛ کابل/تغذیه را بررسی کنید (احتمال ریست بر اثر افت ولتاژ).";
+
+        if (after == target)
+            return "موفق.";
+
+        if (after == before)
+            return "فرمان‌ها OK می‌گیرند اما مقدار نوشته نمی‌شود. سه علت محتمل به‌ترتیب احتمال: " +
+                   "(۱) سهمیه AT+SIMEI این ماژول تمام شده؛ " +
+                   "(۲) firmware مقدار را فقط در RAM می‌پذیرد و روی NV نمی‌نویسد؛ " +
+                   "(۳) IMEI در ناحیه محافظت‌شده/OTP است و فقط با ابزار رسمی سازنده قابل نوشتن است. " +
+                   "گزارش را ذخیره کنید؛ این ماژول با AT قابل تغییر هویت نیست.";
+
+        return $"مقدار به «{after}» تغییر کرد اما با هدف فرق دارد؛ گزارش را برای بررسی نگه دارید.";
     }
 
     private async Task LockImeiAsync()
