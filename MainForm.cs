@@ -683,6 +683,19 @@ internal sealed class MainForm : Form
             ? ImeiWriter.Strategies[_strategyPicker.SelectedIndex - 1]
             : _capabilities?.RecommendedStrategy ?? ImeiWriter.Strategies[0];
 
+        // هشدار سهمیه: AT+SIMEI تعداد نوشتن محدودی دارد (معمولاً ۳ بار). خودآزمون هم یک نوشتن حساب می‌شود،
+        // پس اگر همین حالا IMEI هدف روی دستگاه ست شده، باید مستقیم سراغ بررسی پایداری رفت، نه خودآزمون.
+        if (strategy.Kind == WriteStrategyKind.Simei)
+        {
+            var quota = MessageBox.Show(this,
+                "«AT+SIMEI» تعداد نوشتن محدودی دارد (معمولاً فقط ۳ بار در عمر ماژول).\r\n" +
+                "خودآزمون هم یکی از همان نوشتن‌ها را مصرف می‌کند.\r\n\r\n" +
+                "اگر IMEI هدف همین حالا روی دستگاه ست شده است، به‌جای خودآزمون دکمه «3) بررسی پایداری» را بزنید.\r\n\r\n" +
+                "با این حال خودآزمون انجام شود؟",
+                "هشدار سهمیه AT+SIMEI", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+            if (quota != DialogResult.Yes) return;
+        }
+
         var confirm = MessageBox.Show(this,
             $"خودآزمون «{strategy.Title}» انجام می‌شود: همان IMEI فعلی نوشته و بازخوانی می‌شود؛ " +
             "بنابراین IMEI دستگاه شما تغییر نمی‌کند و فقط پذیرش فرمان را می‌سنجد. ادامه؟",
