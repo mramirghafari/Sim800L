@@ -51,6 +51,11 @@ internal sealed class MainForm : Form
     private string _moduleRevision = string.Empty;
     private string _operatorName = string.Empty;
     private string _iccidMasked = string.Empty;
+    private readonly Button _certificateButton = new();
+    private readonly CheckBox _deepVerify = new();
+    private VerificationCertificate? _certificate;
+    private int _lastPersistenceCycles;
+    private bool _lastPersisted;
     private readonly CheckBox _unlockWrite = new();
     private readonly CheckBox _removeSim = new();
     private readonly CheckBox _persistProfile = new();
@@ -489,6 +494,9 @@ internal sealed class MainForm : Form
         _persistProfile.Text = "ذخیره با AT&W";
         _persistProfile.AutoSize = true;
         _persistProfile.Checked = true;
+        _deepVerify.Text = "پایداری ۳ چرخه‌ای (سخت‌گیرانه)";
+        _deepVerify.AutoSize = true;
+        _deepVerify.Checked = true;
         _verifyPersistence.Text = "تأیید پایداری بعد از نوشتن (ری‌استارت + بازخوانی)";
         _verifyPersistence.AutoSize = true;
         _verifyPersistence.Checked = true;
@@ -498,7 +506,7 @@ internal sealed class MainForm : Form
         foreach (var strategy in ImeiWriter.Strategies) _strategyPicker.Items.Add(strategy.Title);
         _strategyPicker.SelectedIndex = 0;
         SetComboDropDownWidth(_strategyPicker);
-        foreach (var control in new Control[] { _unlockWrite, _removeSim, _persistProfile, _verifyPersistence, _strategyPicker })
+        foreach (var control in new Control[] { _unlockWrite, _removeSim, _persistProfile, _verifyPersistence, _deepVerify, _strategyPicker })
         {
             control.Margin = new Padding(8, 8, 8, 0);
             options.Controls.Add(control);
@@ -537,7 +545,11 @@ internal sealed class MainForm : Form
         save.Margin = new Padding(8, 4, 8, 0);
         save.Click += (_, _) => SaveWriteReport();
 
-        actions.Controls.AddRange([_writeButton, stop, save]);
+        var saveCert = NewActionButton("ذخیره برگه تأیید", Color.FromArgb(70, 92, 125), 160);
+        saveCert.Margin = new Padding(8, 4, 8, 0);
+        saveCert.Click += (_, _) => SaveCertificate();
+
+        actions.Controls.AddRange([_writeButton, stop, save, saveCert]);
         body.Controls.Add(actions, 0, 5);
 
         var tools = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = true };
@@ -571,7 +583,17 @@ internal sealed class MainForm : Form
         _verifyButton.Margin = new Padding(8, 2, 8, 0);
         _verifyButton.Click += async (_, _) => await VerifyPersistenceAsync();
 
-        tools.Controls.AddRange([_diagnoseButton, _selfTestButton, _verifyButton]);
+        _certificateButton.Text = "4) برگه تأیید IMEI";
+        _certificateButton.Width = 165;
+        _certificateButton.Height = 34;
+        _certificateButton.BackColor = Color.FromArgb(70, 92, 125);
+        _certificateButton.ForeColor = Color.White;
+        _certificateButton.FlatStyle = FlatStyle.Flat;
+        _certificateButton.FlatAppearance.BorderSize = 0;
+        _certificateButton.Margin = new Padding(8, 2, 8, 0);
+        _certificateButton.Click += async (_, _) => await GenerateCertificateAsync();
+
+        tools.Controls.AddRange([_diagnoseButton, _selfTestButton, _verifyButton, _certificateButton]);
         body.Controls.Add(tools, 0, 6);
 
         _writeVerdict.Text = "قفل نوشتن بسته است؛ ابتدا چک‌باکس بالا را انتخاب کنید.";
@@ -703,7 +725,11 @@ internal sealed class MainForm : Form
             AppendWriteLog($"بررسی پایداری برای {target} — ماژول ری‌استارت می‌شود.");
             var verifier = new PersistenceVerifier(_device);
             var progress = new Progress<string>(message => AppendWriteLog("» " + message));
-            var result = await verifier.VerifyAsync(target, WaitForManualPowerCycle, progress);
+            var result = _deepVerify.Checked
+                ? await verifier.VerifyMultiCycleAsync(target, 3, WaitForManualPowerCycle, progress)
+                : await verifier.VerifyAsync(target, WaitForManualPowerCycle, progress);
+            _lastPersisted = result.Persisted;
+            _lastPersistenceCycles = result.Cycles > 0 ? result.Cycles : 1;
 
             foreach (var line in result.Detail.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries))
                 AppendWriteLog(line);
@@ -818,11 +844,15 @@ internal sealed class MainForm : Form
                 AppendWriteLog("— بررسی پایداری خودکار (ری‌استارت + بازخوانی) —");
                 var verifier = new PersistenceVerifier(_device);
                 var verifyProgress = new Progress<string>(message => AppendWriteLog("» " + message));
-                var persistence = await verifier.VerifyAsync(target, WaitForManualPowerCycle, verifyProgress, _writeCts.Token);
+                var persistence = _deepVerify.Checked
+                    ? await verifier.VerifyMultiCycleAsync(target, 3, WaitForManualPowerCycle, verifyProgress, _writeCts.Token)
+                    : await verifier.VerifyAsync(target, WaitForManualPowerCycle, verifyProgress, _writeCts.Token);
                 foreach (var line in persistence.Detail.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries))
                     AppendWriteLog(line);
 
                 _lastWrittenImei = persistence.Persisted ? target : persistence.ImeiAfterRestart;
+                _lastPersisted = persistence.Persisted;
+                _lastPersistenceCycles = persistence.Cycles > 0 ? persistence.Cycles : 1;
                 RecordLedger("بررسی پایداری (ری‌استارت)", persistence.ImeiBeforeRestart, persistence.ImeiAfterRestart,
                     target, persistence.Persisted, persistence.Persisted,
                     persistence.Persisted ? "پایدار شد و بعد از ری‌استارت ماند" :
@@ -1248,6 +1278,103 @@ internal sealed class MainForm : Form
             AppendSimLab("خطا: " + ex.Message);
         }
         finally { SetBusy(false); }
+    }
+
+    private async Task GenerateCertificateAsync()
+    {
+        if (!EnsureConnected()) return;
+        try
+        {
+            SetBusy(true);
+            var imei = ImeiWriter.ExtractImei(await _device.SendAsync("AT+GSN", 3000));
+            if (imei.Length != 15)
+            {
+                MessageBox.Show(this, "IMEI ماژول خوانده نشد؛ ابتدا اتصال و تغذیه را بررسی کنید.", "برگه تأیید", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var model = _moduleModel.Length > 0 ? _moduleModel : await FirstResponseAsync("ATI");
+            var revision = _moduleRevision.Length > 0 ? _moduleRevision : await FirstResponseAsync("AT+GMR");
+            var operatorName = _operatorName.Length > 0 ? _operatorName : await FirstResponseAsync("AT+COPS?");
+
+            var files = new SimFileAccess(_device);
+            var checks = new List<string>
+            {
+                $"IMEI با AT+GSN بازخوانی شد: {(imei == _lastWrittenImei || _lastWrittenImei.Length != 15 ? "بله" : "مقدار با آخرین نوشتن فرق دارد")}",
+                $"پایداری: {(_lastPersisted ? $"تأییدشده در {Math.Max(_lastPersistenceCycles, 1)} چرخه" : "تأییدنشده — ابتدا «بررسی پایداری» را اجرا کنید")}"
+            };
+
+            if (await files.IsCrsmSupportedAsync())
+            {
+                var loci = await files.ReadBinaryAsync(SimFileAccess.EfLoci, 11);
+                var onCard = SimFileAccess.DecodeImei(loci.Data);
+                checks.Add($"فیلد IMEI کارت (6F7E): {(onCard.Length == 15 ? onCard : "خالی/موجود نیست")} — " +
+                           (onCard.Length == 15 && onCard == imei ? "با ماژول یکسان" : "در شناسایی شبکه نقشی ندارد"));
+            }
+            else
+            {
+                checks.Add("AT+CRSM در این firmware پشتیبانی نمی‌شود؛ فیلد کارت بررسی نشد");
+            }
+
+            checks.Add("هویت شبکه از Identity Response خود دستگاه می‌آید، نه از سیم‌کارت");
+            checks.Add(IdentityFlow.AnswerSwapQuestion());
+
+            _certificate = new VerificationCertificate(
+                imei,
+                ImeiWriter.ExtractImei(await _device.SendAsync("AT+GSN", 3000)) == imei ? (FindOriginalImei() ?? string.Empty) : string.Empty,
+                model, ModuleFamily.Detect(model), revision, _device.PortName,
+                operatorName, _iccidMasked.Length > 0 ? _iccidMasked : "—",
+                Math.Max(_lastPersistenceCycles, _lastPersisted ? 1 : 0), _lastPersisted,
+                "خودکار/دستی (بر اساس دفتر IMEI)", DateTime.UtcNow, checks);
+
+            _writeLog.Clear();
+            foreach (var line in _certificate.Render().Split(Environment.NewLine)) AppendWriteLog(line);
+
+            _writeVerdict.ForeColor = _lastPersisted ? Color.FromArgb(0, 130, 110) : Color.FromArgb(180, 62, 62);
+            _writeVerdict.Text = _lastPersisted
+                ? $"برگه تأیید آماده است — IMEI {imei} پایدار تأیید شد."
+                : $"برگه تأیید ساخته شد، ولی پایداری تأیید نشده است (IMEI {imei}).";
+            _activity.Text = "برگه تأیید IMEI ساخته شد.";
+
+            SaveCertificate(silent: true);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "خطای برگه تأیید", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally { SetBusy(false); }
+    }
+
+    private string? FindOriginalImei()
+    {
+        var last = _ledger.LastVerifiedFor(_device.PortName);
+        return last?.ImeiBefore;
+    }
+
+    private async Task<string> FirstResponseAsync(string command)
+    {
+        var response = await _device.SendAsync(command, 2500);
+        foreach (var line in response.Replace("\r", string.Empty).Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length == 0) continue;
+            if (trimmed.Equals("OK", StringComparison.OrdinalIgnoreCase)) continue;
+            if (trimmed.StartsWith("AT", StringComparison.OrdinalIgnoreCase)) continue;
+            return trimmed;
+        }
+        return "—";
+    }
+
+    private void SaveCertificate(bool silent = false)
+    {
+        if (_certificate is null) return;
+        var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "XAnten");
+        Directory.CreateDirectory(folder);
+        var path = Path.Combine(folder, _certificate.RenderFileName());
+        File.WriteAllText(path, _certificate.Render());
+        _activity.Text = "برگه تأیید ذخیره شد: " + path;
+        if (!silent)
+            MessageBox.Show(this, path, "مسیر برگه تأیید", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void ShowIdentityFlow()

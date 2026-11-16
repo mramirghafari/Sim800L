@@ -226,6 +226,29 @@ internal static class SelfTests
             string.Join(" ", IdentityFlow.Stages().Select(x => x.What)).Contains("Identity Response"));
         Check("پاسخ تعویض گوشی صریح است", IdentityFlow.AnswerSwapQuestion().Contains("IMEI خودش"));
 
+        // --- چرخه پایداری و برگه تأیید ---------------------------------------
+        var threeCycles = new PersistenceResult("352099001761481", "352099001761481", "352099001761481", true, true, "ok", 3, false);
+        Check("پایداری سه‌چرخه‌ای سطح اطمینان بالا می‌گیرد",
+            threeCycles.MultiCycle && threeCycles.Confidence.StartsWith("بالا"));
+        var oneCycle = threeCycles with { Cycles = 1 };
+        Check("پایداری یک‌چرخه‌ای فقط اطمینان متوسط دارد", !oneCycle.MultiCycle && oneCycle.Confidence.StartsWith("متوسط"));
+        var failedCycle = threeCycles with { Persisted = false };
+        Check("پایداری ناموفق هرگز اطمینان نمی‌گیرد", failedCycle.Confidence == "پایدار نشد");
+
+        var certificate = new VerificationCertificate(
+            "352099001761481", "490154203237518", "SIM800L R14.18", ModuleFamily.Sim800L,
+            "Revision:1418B05SIM800L24", "COM4", "ایرانسل", "8961**************45",
+            3, true, "AT+EGMR", new DateTime(2026, 11, 16, 9, 30, 0, DateTimeKind.Utc),
+            ["IMEI خوانده شد", "پایداری ۳ چرخه"]);
+        var rendered = certificate.Render();
+        Check("برگه تأیید شامل IMEI نهایی و مدل است",
+            rendered.Contains("352099001761481") && rendered.Contains("SIM800L"));
+        Check("برگه تأیید IMEI اولیه را برای بازگردانی نشان می‌دهد", rendered.Contains("490154203237518"));
+        Check("شماره سند برگه شامل چهار رقم آخر IMEI است", certificate.Serial.EndsWith("1481"));
+        Check("نسخه فشرده برگه قابل کپی است",
+            certificate.RenderCompact().Contains("352099001761481") && certificate.RenderCompact().Contains("۳ چرخه"));
+        Check("نام فایل برگه شامل IMEI است", certificate.RenderFileName().Contains("IMEI-cert-352099001761481"));
+
         // --- محافظ AT --------------------------------------------------------
         AtGuard.ImeiWriteUnlocked = false;
         Check("فرمان معمولی AT مجاز است", AtGuard.IsAllowed("AT+CSQ", out _));

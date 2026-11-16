@@ -8,9 +8,20 @@ internal sealed record PersistenceResult(
     string ImeiAfterRestart,
     bool RestartDetected,
     bool Persisted,
-    string Detail)
+    string Detail,
+    int Cycles = 0,
+    bool PowerCycleRequired = false)
 {
     public bool ExpectedNeverWritten => ImeiBeforeRestart.Length != 15 && !Persisted;
+
+    /// <summary>آیا نتیجه بر اساس چند چرخه کامل است (۳ چرخه برای اطمینان بیشتر).</summary>
+    public bool MultiCycle => Cycles >= 3;
+
+    public string Confidence => Persisted && MultiCycle
+        ? "بالا — ۳ چرخه ری‌استارت/برق را پشت سر گذاشت"
+        : Persisted
+            ? "متوسط — فقط یک چرخه (برای اطمینان ۳ چرخه را اجرا کنید)"
+            : "پایدار نشد";
 }
 
 /// <summary>
@@ -55,6 +66,61 @@ internal sealed class PersistenceVerifier
             await Task.Delay(800, ct);
         }
         return false;
+    }
+
+    /// <summary>
+    /// پایداری را در چند چرخه پشت سر هم می‌سنجد. اگر در هر چرخه مقدار برگشت، همان‌جا متوقف
+    /// می‌شود و ناپایدار گزارش می‌دهد. <paramref name="cycles"/> پیشنهادی ۳ است.
+    /// </summary>
+    public async Task<PersistenceResult> VerifyMultiCycleAsync(
+        string target,
+        int cycles = 3,
+        Func<bool>? waitForManualCycle = null,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        cycles = Math.Clamp(cycles, 1, 10);
+        var detail = new StringBuilder();
+        detail.AppendLine($"تأیید پایداری در {cycles} چرخه برای IMEI {target}");
+        detail.AppendLine(new string('-', 46));
+
+        var last = await ReadImeiAsync(_device, ct);
+        var powerCycleNeeded = false;
+        var completed = 0;
+
+        for (var cycle = 1; cycle <= cycles; cycle++)
+        {
+            progress?.Report($"چرخه {cycle} از {cycles}: ری‌استارت و بازخوانی");
+            var softOk = false;
+            try { softOk = await SoftRestartAsync(ct); } catch { softOk = false; }
+
+            if (!softOk)
+            {
+                powerCycleNeeded = true;
+                progress?.Report("ری‌استارت نرم ممکن نشد؛ منتظر قطع/وصل برق دستی هستم.");
+                waitForManualCycle?.Invoke();
+                await Task.Delay(1500, ct);
+            }
+
+            var current = await ReadImeiAsync(_device, ct);
+            completed++;
+            detail.AppendLine($"چرخه {cycle}: {(softOk ? "ری‌استارت نرم" : "قطع/وصل برق")} → {(current.Length == 15 ? current : "بدون پاسخ")}");
+
+            if (current != target)
+            {
+                detail.AppendLine(current.Length != 15
+                    ? "ماژول پاسخ نداد؛ کابل/تغذیه را بررسی و دوباره تلاش کنید."
+                    : "مقدار تغییر کرد؛ این firmware مقدار را پایدار نگه نمی‌دارد.");
+                return new PersistenceResult(target, last, current, softOk, false, detail.ToString(), completed, powerCycleNeeded);
+            }
+
+            last = current;
+        }
+
+        detail.AppendLine();
+        detail.AppendLine($"✅ پایدار: IMEI {target} در هر {completed} چرخه ثابت ماند.");
+        detail.AppendLine("برای نتیجه قطعی، یک بار هم برق ماژول را کامل قطع و وصل کنید و بازخوانی را تکرار کنید.");
+        return new PersistenceResult(target, target, last, true, true, detail.ToString(), completed, powerCycleNeeded);
     }
 
     /// <summary>
