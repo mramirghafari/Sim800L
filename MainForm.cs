@@ -54,6 +54,12 @@ internal sealed class MainForm : Form
     private readonly Button _certificateButton = new();
     private readonly Button _lockImeiButton = new();
     private readonly Button _identityProofButton = new();
+    private readonly SimProfileBinder _binder = new();
+    private readonly TextBox _bindKey = new();
+    private readonly TextBox _bindImei = new();
+    private readonly TextBox _bindLabel = new();
+    private readonly TextBox _bindView = new();
+    private readonly Button _quizButton = new();
     private readonly CheckBox _deepVerify = new();
     private VerificationCertificate? _certificate;
     private int _lastPersistenceCycles;
@@ -124,6 +130,7 @@ internal sealed class MainForm : Form
         _tabs.TabPages.Add(BuildCardProfile());
         _tabs.TabPages.Add(BuildSimLab());
         _tabs.TabPages.Add(BuildLedger());
+        _tabs.TabPages.Add(BuildSimProfiles());
         _tabs.TabPages.Add(BuildLogs());
         _tabs.TabPages.Add(BuildGuide());
         root.Controls.Add(_tabs, 0, 1);
@@ -1585,6 +1592,285 @@ internal sealed class MainForm : Form
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         File.WriteAllText(dialog.FileName, _ledger.ExportText());
         _activity.Text = "دفتر IMEI ذخیره شد: " + dialog.FileName;
+    }
+
+    private TabPage BuildSimProfiles()
+    {
+        var page = NewPage("پروفایل سیم‌کارت");
+        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6, Padding = new Padding(16) };
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        page.Controls.Add(body);
+
+        body.Controls.Add(new Label
+        {
+            Text = "هر سیم‌کارت با یک IMEI یگانه نسبت داده می‌شود (همان الگوی SIM Server: «هر SIM باید IMEI منحصربه‌فرد داشته باشد»). " +
+                   "وقتی این سیم‌کارت را در پورت می‌گذارید، برنامه IMEI متناظر همان کارت را روی ماژول می‌نویسد. " +
+                   "توجه: IMEI روی ماژول نوشته می‌شود (همان کاری که گیت‌وی‌های سیم‌کارت هم با پورت GSM انجام می‌دهند)، نه روی خود کارت.",
+            ForeColor = Color.FromArgb(160, 72, 45),
+            BackColor = Color.FromArgb(255, 244, 232),
+            Padding = new Padding(12, 8, 12, 8),
+            Dock = DockStyle.Fill,
+            RightToLeft = RightToLeft.Yes
+        }, 0, 0);
+
+        var row1 = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        var keyCaption = new Label { Text = "IMSI/ICCID سیم‌کارت", AutoSize = true, ForeColor = Navy, Margin = new Padding(8, 12, 8, 0) };
+        _bindKey.Width = 260;
+        _bindKey.RightToLeft = RightToLeft.No;
+        _bindKey.Font = new Font("Cascadia Mono", 10.5f);
+        _bindKey.Margin = new Padding(8, 6, 8, 0);
+        var readCard = NewActionButton("خواندن از کارت", Color.FromArgb(70, 92, 125), 150);
+        readCard.Margin = new Padding(8, 4, 8, 0);
+        readCard.Click += async (_, _) => await FillFromCardAsync();
+        var imeiCaption = new Label { Text = "IMEI تخصیصی", AutoSize = true, ForeColor = Navy, Margin = new Padding(8, 12, 8, 0) };
+        _bindImei.Width = 210;
+        _bindImei.MaxLength = 15;
+        _bindImei.RightToLeft = RightToLeft.No;
+        _bindImei.Font = new Font("Cascadia Mono", 10.5f);
+        _bindImei.Margin = new Padding(8, 6, 8, 0);
+        row1.Controls.AddRange([keyCaption, _bindKey, readCard, imeiCaption, _bindImei]);
+        body.Controls.Add(row1, 0, 1);
+
+        var row2 = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        var labelCaption = new Label { Text = "برچسب (اختیاری)", AutoSize = true, ForeColor = Navy, Margin = new Padding(8, 12, 8, 0) };
+        _bindLabel.Width = 220;
+        _bindLabel.Margin = new Padding(8, 6, 8, 0);
+        var saveBind = NewActionButton("ثبت نسبت", Accent, 130);
+        saveBind.Margin = new Padding(8, 4, 8, 0);
+        saveBind.Click += (_, _) => SaveBinding();
+        var applyBind = NewActionButton("اعمال IMEI این کارت روی ماژول", Navy, 240);
+        applyBind.Margin = new Padding(8, 4, 8, 0);
+        applyBind.Click += async (_, _) => await ApplyBindingAsync();
+        row2.Controls.AddRange([labelCaption, _bindLabel, saveBind, applyBind]);
+        body.Controls.Add(row2, 0, 2);
+
+        _bindView.Dock = DockStyle.Fill;
+        _bindView.Multiline = true;
+        _bindView.ReadOnly = true;
+        _bindView.ScrollBars = ScrollBars.Both;
+        _bindView.WordWrap = false;
+        _bindView.RightToLeft = RightToLeft.No;
+        _bindView.BackColor = Color.White;
+        _bindView.Font = new Font("Cascadia Mono", 9f);
+        body.Controls.Add(_bindView, 0, 3);
+
+        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        var reload = NewActionButton("بازخوانی", Color.FromArgb(70, 92, 125), 110);
+        reload.Margin = new Padding(8, 2, 8, 0);
+        reload.Click += (_, _) => ReloadBindings();
+        var export = NewActionButton("ذخیره فایل", Color.FromArgb(70, 92, 125), 130);
+        export.Margin = new Padding(8, 2, 8, 0);
+        export.Click += (_, _) => ExportBindings();
+        _quizButton.Text = "آزمون اصالت دستگاه (Quiz)";
+        _quizButton.Width = 220;
+        _quizButton.Height = 34;
+        _quizButton.BackColor = Color.FromArgb(70, 92, 125);
+        _quizButton.ForeColor = Color.White;
+        _quizButton.FlatStyle = FlatStyle.Flat;
+        _quizButton.FlatAppearance.BorderSize = 0;
+        _quizButton.Margin = new Padding(8, 2, 8, 0);
+        _quizButton.Click += async (_, _) => await RunQuizAsync();
+        actions.Controls.AddRange([reload, export, _quizButton]);
+        body.Controls.Add(actions, 0, 4);
+
+        var hint = new Label
+        {
+            Text = "آزمون Quiz همان روش گوشی‌های سامسونگ (اندروید ۱۱+) است: رشته ۳۵ رقمی چالش + پاسخ مبتنی بر IMEI دستگاه.",
+            ForeColor = Muted,
+            AutoSize = true,
+            Dock = DockStyle.Fill,
+            RightToLeft = RightToLeft.Yes
+        };
+        body.Controls.Add(hint, 0, 5);
+
+        ReloadBindings();
+        return page;
+    }
+
+    private void ReloadBindings()
+    {
+        _bindView.Text = _binder.ExportText();
+    }
+
+    private void ExportBindings()
+    {
+        using var dialog = new SaveFileDialog
+        {
+            Title = "ذخیره پروفایل سیم‌کارت",
+            Filter = "Text|*.txt",
+            FileName = $"sim-profiles-{DateTime.Now:yyyyMMdd-HHmm}.txt"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        File.WriteAllText(dialog.FileName, _binder.ExportText());
+        _activity.Text = "پروفایل سیم‌کارت ذخیره شد: " + dialog.FileName;
+    }
+
+    private async Task FillFromCardAsync()
+    {
+        if (!EnsureConnected()) return;
+        try
+        {
+            SetBusy(true);
+            var snapshot = await _device.ReadSnapshotAsync();
+            var imsi = new string(snapshot.Imsi.Where(char.IsDigit).ToArray());
+            var iccid = new string(snapshot.Iccid.Where(char.IsDigit).ToArray());
+            _bindKey.Text = imsi.Length >= 6 ? imsi : iccid;
+            if (_bindKey.TextLength == 0)
+                MessageBox.Show(this, "IMSI/ICCID از کارت خوانده نشد.", "کارت", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally { SetBusy(false); }
+    }
+
+    private void SaveBinding()
+    {
+        var key = new string(_bindKey.Text.Where(char.IsDigit).ToArray());
+        var imei = new string(_bindImei.Text.Where(char.IsDigit).ToArray());
+        if (key.Length < 6)
+        {
+            MessageBox.Show(this, "شناسه سیم‌کارت (IMSI یا ICCID) را وارد کنید یا با دکمه «خواندن از کارت» پر کنید.");
+            return;
+        }
+        if (!ImeiNumber.TryParse(imei, out _, out var error))
+        {
+            MessageBox.Show(this, error, "IMEI نامعتبر", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var duplicate = _binder.DuplicateWarning(imei, key);
+        if (duplicate is not null)
+        {
+            var proceed = MessageBox.Show(this, duplicate + "\r\n\r\nباز هم ثبت شود؟", "IMEI تکراری",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+            if (proceed != DialogResult.Yes) return;
+        }
+
+        try
+        {
+            var last = _ledger.LastVerifiedFor(_device.PortName);
+            _binder.Upsert(key, imei, last?.ImeiBefore ?? string.Empty, _bindLabel.Text.Trim(), _operatorName, _lastPersisted);
+            ReloadBindings();
+            _activity.Text = "نسبت سیم‌کارت ↔ IMEI ثبت شد.";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "خطا در ثبت", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private async Task ApplyBindingAsync()
+    {
+        if (!EnsureConnected()) return;
+        var key = new string(_bindKey.Text.Where(char.IsDigit).ToArray());
+        if (key.Length < 6)
+        {
+            MessageBox.Show(this, "ابتدا سیم‌کارت را بخوانید یا شناسه را وارد کنید.");
+            return;
+        }
+        var binding = _binder.ResolveForPort(key);
+        if (binding is null || !binding.HasValidImei)
+        {
+            MessageBox.Show(this, "برای این سیم‌کارت IMEI ثبت نشده است؛ ابتدا «ثبت نسبت» را بزنید.");
+            return;
+        }
+        if (!_unlockWrite.Checked)
+        {
+            MessageBox.Show(this, "برای نوشتن، ابتدا قفل نوشتن را باز کنید.", "قفل است", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var confirm = MessageBox.Show(this,
+            $"IMEI ثبت‌شده برای این سیم‌کارت: {binding.Imei}\r\n\r\n" +
+            (binding.Locked ? "این IMEI قبلاً روی ماژول قفل شده است.\r\n" : string.Empty) +
+            "روی ماژول فعلی نوشته شود؟",
+            "اعمال IMEI سیم‌کارت", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        if (confirm != DialogResult.Yes) return;
+
+        _bindImei.Text = binding.Imei;
+        _targetImei = ImeiNumber.TryParse(binding.Imei, out var parsed, out _) ? parsed : null;
+        _imeiInput.Text = binding.Imei;
+        await WriteImeiAsync();
+    }
+
+    private async Task RunQuizAsync()
+    {
+        if (!EnsureConnected()) return;
+        try
+        {
+            SetBusy(true);
+            var quiz = new DeviceQuiz(_device);
+            var imei = await quiz.ReadImeiAsync();
+            if (imei.Length != 15)
+            {
+                MessageBox.Show(this, "IMEI خوانده نشد.");
+                return;
+            }
+
+            var challenge = DeviceQuiz.BuildChallenge(imei);
+            var attempts = 3;
+            while (attempts > 0)
+            {
+                var answer = ShowQuizDialog(challenge, attempts);
+                if (answer is null) break;
+                var result = DeviceQuiz.Evaluate(answer, challenge, imei, attempts);
+                if (result.Correct)
+                {
+                    MessageBox.Show(this,
+                        $"✅ پاسخ درست بود.\r\n\r\nIMEI دستگاه: {imei}\r\n" +
+                        "یعنی هویتی که این ماژول ارائه می‌دهد با IMEI واقعی‌اش می‌خواند.\r\n\r\n" + DeviceQuiz.Explain(),
+                        "آزمون اصالت", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                attempts = result.Remaining;
+                MessageBox.Show(this, $"پاسخ درست نبود. تلاش باقی‌مانده: {attempts}",
+                    "آزمون اصالت", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            MessageBox.Show(this, "آزمون انجام نشد.", "آزمون اصالت", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        finally { SetBusy(false); }
+    }
+
+    private string? ShowQuizDialog(string challenge, int attempts)
+    {
+        using var form = new Form
+        {
+            Text = $"آزمون اصالت — {attempts} تلاش",
+            Width = 620,
+            Height = 260,
+            StartPosition = FormStartPosition.CenterParent,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            MaximizeBox = false,
+            MinimizeBox = false,
+            RightToLeft = RightToLeft.Yes,
+            RightToLeftLayout = true,
+            BackColor = Background,
+            Font = AppFonts.Ui(10f)
+        };
+
+        var label = new Label
+        {
+            Text = "رشته ۳۵ رقمی زیر را با استفاده از IMEI دستگاه حل کنید (همان روش سامسونگ/اندروید ۱۱+):\r\n" +
+                   challenge + "\r\n\r\nپاسخ ۳۵ کاراکتری (حروف بزرگ/کوچک، رقم، - و _):",
+            Dock = DockStyle.Top,
+            Height = 96,
+            Padding = new Padding(12),
+            ForeColor = Navy
+        };
+        var input = new TextBox { Dock = DockStyle.Top, Font = new Font("Cascadia Mono", 10f), MaxLength = 35 };
+        var ok = new Button { Text = "بررسی", Dock = DockStyle.Bottom, Height = 38, BackColor = Accent, ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+        ok.FlatAppearance.BorderSize = 0;
+        ok.Click += (_, _) => form.DialogResult = DialogResult.OK;
+
+        form.Controls.Add(input);
+        form.Controls.Add(ok);
+        form.Controls.Add(label);
+        form.AcceptButton = ok;
+
+        return form.ShowDialog(this) == DialogResult.OK ? input.Text : null;
     }
 
     private TabPage BuildGuide()
