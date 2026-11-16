@@ -266,6 +266,13 @@ internal static class SelfTests
         Check("خانواده SIMCom LTE شناسایی می‌شود", ModuleFamily.Detect("SIM7600E-H") == ModuleFamily.SimcomLte);
         Check("SIMCom LTE مسیر اختصاصی دارد", ModuleFamily.HasVendorPath(ModuleFamily.SimcomLte));
 
+        // --- تفکیک منبع هویت ------------------------------------------------
+        Check("هشدار IMEI تکراری، بلاک‌شدن هر دو دستگاه را ذکر می‌کند",
+            IdentityProof.DuplicateImeiWarning("352099001761481").Contains("تکراری") &&
+            IdentityProof.DuplicateImeiWarning("352099001761481").Contains("بلاک"));
+        Check("هشدار شامل خود IMEI است",
+            IdentityProof.DuplicateImeiWarning("352099001761481").Contains("352099001761481"));
+
         // --- محافظ AT --------------------------------------------------------
         AtGuard.ImeiWriteUnlocked = false;
         Check("فرمان معمولی AT مجاز است", AtGuard.IsAllowed("AT+CSQ", out _));

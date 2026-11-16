@@ -53,6 +53,7 @@ internal sealed class MainForm : Form
     private string _iccidMasked = string.Empty;
     private readonly Button _certificateButton = new();
     private readonly Button _lockImeiButton = new();
+    private readonly Button _identityProofButton = new();
     private readonly CheckBox _deepVerify = new();
     private VerificationCertificate? _certificate;
     private int _lastPersistenceCycles;
@@ -1130,7 +1131,17 @@ internal sealed class MainForm : Form
         _identityFlowButton.Margin = new Padding(8, 4, 8, 0);
         _identityFlowButton.Click += (_, _) => ShowIdentityFlow();
 
-        actions.Controls.AddRange([_simLabProbe, _simLabWriteTest, _networkProbe, _identityFlowButton]);
+        _identityProofButton.Text = "اثبات: IMEI از کجاست؟";
+        _identityProofButton.Width = 175;
+        _identityProofButton.Height = 36;
+        _identityProofButton.BackColor = Color.FromArgb(70, 92, 125);
+        _identityProofButton.ForeColor = Color.White;
+        _identityProofButton.FlatStyle = FlatStyle.Flat;
+        _identityProofButton.FlatAppearance.BorderSize = 0;
+        _identityProofButton.Margin = new Padding(8, 4, 8, 0);
+        _identityProofButton.Click += async (_, _) => await RunIdentityProofAsync();
+
+        actions.Controls.AddRange([_simLabProbe, _simLabWriteTest, _networkProbe, _identityFlowButton, _identityProofButton]);
         body.Controls.Add(actions, 0, 1);
 
         _simLabLog.Dock = DockStyle.Fill;
@@ -1440,6 +1451,45 @@ internal sealed class MainForm : Form
         _activity.Text = "برگه تأیید ذخیره شد: " + path;
         if (!silent)
             MessageBox.Show(this, path, "مسیر برگه تأیید", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private async Task RunIdentityProofAsync()
+    {
+        if (!EnsureConnected()) return;
+        try
+        {
+            SetBusy(true);
+            _simLabLog.Clear();
+            AppendSimLab("— اثبات عملی منبع IMEI —");
+            AppendSimLab("این آزمون نشان می‌دهد کدام شناسه از ماژول می‌آید و کدام از سیم‌کارت.");
+            AppendSimLab(string.Empty);
+
+            var proof = new IdentityProof(_device);
+            var rows = await proof.RunAsync();
+            foreach (var row in rows)
+            {
+                AppendSimLab($"{row.Scenario}");
+                AppendSimLab($"   مقدار   : {row.ImeiReported}");
+                AppendSimLab($"   منبع    : {row.Source}");
+                AppendSimLab($"   معنا    : {row.Meaning}");
+                AppendSimLab(string.Empty);
+            }
+
+            AppendSimLab("آزمون قطعی: سیم‌کارت را دربیاورید و دوباره همین آزمون را بزنید.");
+            AppendSimLab("IMEI باید همان مقدار قبلی بماند (از حافظه ماژول)، ولی IMSI/ICCID خالی می‌شود.");
+            AppendSimLab("اگر IMEI از سیم‌کارت می‌آمد، بدون کارت باید خالی یا خطا می‌داد.");
+            AppendSimLab(string.Empty);
+            var imei = rows[0].ImeiReported;
+            if (imei.Length == 15) AppendSimLab(IdentityProof.DuplicateImeiWarning(imei));
+
+            _simLabVerdict.ForeColor = Color.FromArgb(160, 72, 45);
+            _simLabVerdict.Text = "IMEI از دستگاه می‌آید و IMSI/ICCID از سیم‌کارت؛ برای همین تعویض کارت IMEI را عوض نمی‌کند.";
+        }
+        catch (Exception ex)
+        {
+            AppendSimLab("خطا: " + ex.Message);
+        }
+        finally { SetBusy(false); }
     }
 
     private void ShowIdentityFlow()
