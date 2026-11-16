@@ -58,12 +58,12 @@ internal sealed class PersistenceVerifier
     }
 
     /// <summary>
-    /// پس از نوشتن، پایداری را بررسی می‌کند. اگر <paramref name="requireManualPowerCycle"/> درست باشد
-    /// (وقتی ری‌استارت نرم مطمئن نیست) از کاربر می‌خواهد برق را قطع/وصل کند.
+    /// پس از نوشتن، پایداری را بررسی می‌کند. اگر ری‌استارت نرم موفق نباشد،
+    /// <paramref name="waitForManualCycle"/> کاربر را برای قطع/وصل برق راهنمایی می‌کند.
     /// </summary>
     public async Task<PersistenceResult> VerifyAsync(
         string target,
-        Func<bool>? waitForManualCycle = null,
+        Action? waitForManualCycle = null,
         IProgress<string>? progress = null,
         CancellationToken ct = default)
     {

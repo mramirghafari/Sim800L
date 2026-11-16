@@ -10,6 +10,7 @@
     <AssemblyTitle>XAnten</AssemblyTitle>
     <Product>XAnten</Product>
     <Description>مرکز مدیریت سیم‌کارت و IMEI برای ماژول SIM800L</Description>
+    <ApplicationIcon>Assets\XAnten.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,5 +20,8 @@
   <ItemGroup>
     <EmbeddedResource Include="Assets\YekanBakh-Light.ttf" LogicalName="SIM800L_Flasher.Assets.YekanBakh-Light.ttf" />
     <EmbeddedResource Include="Assets\YekanBakh-SemiBold.ttf" LogicalName="SIM800L_Flasher.Assets.YekanBakh-SemiBold.ttf" />
+    <EmbeddedResource Include="Assets\XAnten_Icon_Transparent.png" LogicalName="SIM800L_Flasher.Assets.XAnten_Icon_Transparent.png" />
+    <EmbeddedResource Include="Assets\XAnten_Wordmark_Transparent.png" LogicalName="SIM800L_Flasher.Assets.XAnten_Wordmark_Transparent.png" />
+    <EmbeddedResource Include="Assets\XAnten.ico" LogicalName="SIM800L_Flasher.Assets.XAnten.ico" />
   </ItemGroup>
 </Project>

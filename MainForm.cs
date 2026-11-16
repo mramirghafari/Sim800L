@@ -59,6 +59,7 @@ internal sealed class MainForm : Form
     public MainForm()
     {
         Text = "XAnten — مرکز مدیریت سیم‌کارت و IMEI";
+        Icon = BrandAssets.WindowIcon;
         Width = 1180;
         Height = 760;
         MinimumSize = new Size(980, 650);
@@ -109,27 +110,49 @@ internal sealed class MainForm : Form
     private Control BuildHeader()
     {
         var panel = new Panel { Dock = DockStyle.Fill, BackColor = Navy, Padding = new Padding(22, 13, 22, 12) };
-        var title = new Label
+        var brand = new Panel
         {
-            Text = "XAnten",
-            ForeColor = Color.White,
-            Font = AppFonts.Ui(20f, FontStyle.Bold),
-            Bounds = new Rectangle(900, 6, 230, 38),
-            TextAlign = ContentAlignment.MiddleRight,
+            Dock = DockStyle.Right,
+            Width = 266,
+            BackColor = Color.White,
             RightToLeft = RightToLeft.No
+        };
+        brand.Paint += (_, e) =>
+        {
+            using var pen = new Pen(Color.FromArgb(224, 230, 238));
+            e.Graphics.DrawRectangle(pen, 0, 0, brand.Width - 1, brand.Height - 1);
+        };
+
+        var icon = new PictureBox
+        {
+            Image = BrandAssets.IconImage,
+            Bounds = new Rectangle(201, 5, 58, 60),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            BackColor = Color.Transparent
+        };
+        var wordmark = new PictureBox
+        {
+            Image = BrandAssets.WordmarkImage,
+            Bounds = new Rectangle(10, 7, 184, 33),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            BackColor = Color.Transparent
         };
         var subtitle = new Label
         {
             Text = "مرکز مدیریت سیم‌کارت و IMEI",
-            ForeColor = Color.FromArgb(177, 190, 210),
-            Bounds = new Rectangle(900, 45, 230, 28),
-            TextAlign = ContentAlignment.MiddleLeft
+            ForeColor = Color.FromArgb(77, 91, 112),
+            Font = AppFonts.Ui(9.5f),
+            Bounds = new Rectangle(10, 41, 184, 24),
+            TextAlign = ContentAlignment.MiddleCenter,
+            RightToLeft = RightToLeft.Yes
         };
-        panel.Controls.Add(title);
-        panel.Controls.Add(subtitle);
+        brand.Controls.Add(icon);
+        brand.Controls.Add(wordmark);
+        brand.Controls.Add(subtitle);
+        panel.Controls.Add(brand);
 
-        ConfigureCombo(_ports, 755, 27, 120);
-        ConfigureCombo(_baud, 625, 27, 115);
+        ConfigureCombo(_ports, 742, 27, 120);
+        ConfigureCombo(_baud, 615, 27, 115);
         foreach (var baud in new[] { 9600, 19200, 38400, 57600, 115200 }) _baud.Items.Add(baud.ToString());
         _baud.SelectedItem = "9600";
         panel.Controls.Add(_ports);
