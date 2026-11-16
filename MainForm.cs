@@ -1116,13 +1116,20 @@ internal sealed class MainForm : Form
 
             var leftInset = combo.RightToLeft == RightToLeft.Yes ? 36 : 8;
             var textBounds = new Rectangle(e.Bounds.X + leftInset, e.Bounds.Y, Math.Max(0, e.Bounds.Width - leftInset - 10), e.Bounds.Height);
+            var textFlags = TextFormatFlags.Right |
+                            TextFormatFlags.VerticalCenter |
+                            TextFormatFlags.SingleLine |
+                            TextFormatFlags.NoPrefix;
+            if (combo.RightToLeft == RightToLeft.Yes)
+                textFlags |= TextFormatFlags.RightToLeft;
+
             TextRenderer.DrawText(
                 e.Graphics,
                 combo.Items[e.Index]?.ToString() ?? string.Empty,
                 combo.Font,
                 textBounds,
                 Navy,
-                TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+                textFlags);
 
             if ((e.State & DrawItemState.Focus) == DrawItemState.Focus)
                 e.DrawFocusRectangle();
