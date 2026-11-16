@@ -192,39 +192,41 @@ internal sealed class MainForm : Form
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.RightToLeft,
             WrapContents = false,
-            Padding = new Padding(0, 8, 8, 0),
+            Padding = new Padding(0, 1, 8, 0),
             Margin = Padding.Empty,
             RightToLeft = RightToLeft.No,
             BackColor = Color.Transparent
         };
 
-        ConfigureCombo(_ports, 0, 0, 120);
-        ConfigureCombo(_baud, 0, 0, 115);
+        ConfigureCombo(_ports, 0, 0, 135);
+        ConfigureCombo(_baud, 0, 0, 125);
         foreach (var baud in new[] { 9600, 19200, 38400, 57600, 115200 }) _baud.Items.Add(baud.ToString());
         _baud.SelectedItem = "9600";
-        _ports.Margin = new Padding(5, 0, 5, 0);
-        _baud.Margin = new Padding(5, 0, 5, 0);
+        SetComboDropDownWidth(_baud);
+
+        var portSelector = BuildLabeledSelector("پورت COM", _ports, 135);
+        var baudSelector = BuildLabeledSelector("سرعت ارتباط", _baud, 125);
 
         _scanButton.Text = "بازخوانی";
         StyleButton(_scanButton, 0, 0, 90, 40, Color.FromArgb(49, 62, 83), Color.White);
-        _scanButton.Margin = new Padding(5, 0, 5, 0);
+        _scanButton.Margin = new Padding(5, 18, 5, 0);
         _scanButton.Click += (_, _) => RefreshPorts();
 
         _connectButton.Text = "اتصال";
         StyleButton(_connectButton, 0, 0, 100, 40, Accent, Color.White);
-        _connectButton.Margin = new Padding(5, 0, 5, 0);
+        _connectButton.Margin = new Padding(5, 18, 5, 0);
         _connectButton.Click += async (_, _) => await ToggleConnectionAsync();
 
         _connectionStatus.Text = "● قطع";
         _connectionStatus.ForeColor = Color.FromArgb(255, 143, 143);
         _connectionStatus.AutoSize = false;
-        _connectionStatus.Size = new Size(165, 40);
-        _connectionStatus.Margin = new Padding(5, 0, 5, 0);
+        _connectionStatus.Size = new Size(150, 40);
+        _connectionStatus.Margin = new Padding(5, 18, 5, 0);
         _connectionStatus.Font = AppFonts.Ui(10.5f);
         _connectionStatus.TextAlign = ContentAlignment.MiddleRight;
         _connectionStatus.RightToLeft = RightToLeft.Yes;
 
-        controls.Controls.AddRange([_ports, _baud, _scanButton, _connectButton, _connectionStatus]);
+        controls.Controls.AddRange([portSelector, baudSelector, _scanButton, _connectButton, _connectionStatus]);
         panel.Controls.Add(controls, 0, 0);
         panel.Controls.Add(brand, 1, 0);
 
@@ -476,11 +478,12 @@ internal sealed class MainForm : Form
         _verifyPersistence.Text = "تأیید پایداری بعد از نوشتن (ری‌استارت + بازخوانی)";
         _verifyPersistence.AutoSize = true;
         _verifyPersistence.Checked = true;
-        ConfigureCombo(_strategyPicker, 0, 0, 330);
+        ConfigureCombo(_strategyPicker, 0, 0, 480);
         _strategyPicker.RightToLeft = RightToLeft.Yes;
         _strategyPicker.Items.Add("خودکار (همه استراتژی‌ها به‌ترتیب)");
         foreach (var strategy in ImeiWriter.Strategies) _strategyPicker.Items.Add(strategy.Title);
         _strategyPicker.SelectedIndex = 0;
+        SetComboDropDownWidth(_strategyPicker);
         foreach (var control in new Control[] { _unlockWrite, _removeSim, _persistProfile, _verifyPersistence, _strategyPicker })
         {
             control.Margin = new Padding(8, 8, 8, 0);
@@ -1046,6 +1049,49 @@ internal sealed class MainForm : Form
         }
     }
 
+    private static Control BuildLabeledSelector(string caption, ComboBox combo, int width)
+    {
+        var container = new TableLayoutPanel
+        {
+            Width = width,
+            Height = 58,
+            RowCount = 2,
+            ColumnCount = 1,
+            Margin = new Padding(5, 0, 5, 0),
+            Padding = Padding.Empty,
+            BackColor = Color.Transparent,
+            RightToLeft = RightToLeft.Yes
+        };
+        container.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
+        container.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        container.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+        var label = new Label
+        {
+            Text = caption,
+            Dock = DockStyle.Fill,
+            ForeColor = Color.FromArgb(190, 205, 224),
+            Font = AppFonts.Ui(8.5f),
+            TextAlign = ContentAlignment.MiddleRight,
+            Padding = new Padding(0, 0, 4, 0)
+        };
+        combo.Dock = DockStyle.Fill;
+        combo.Margin = Padding.Empty;
+        container.Controls.Add(label, 0, 0);
+        container.Controls.Add(combo, 0, 1);
+        return container;
+    }
+
+    private static void SetComboDropDownWidth(ComboBox combo)
+    {
+        var widestItem = combo.Items
+            .Cast<object>()
+            .Select(item => TextRenderer.MeasureText(item?.ToString() ?? string.Empty, combo.Font).Width)
+            .DefaultIfEmpty(combo.Width)
+            .Max();
+        combo.DropDownWidth = Math.Max(combo.Width, Math.Min(680, widestItem + 54));
+    }
+
     private static void ConfigureCombo(ComboBox combo, int x, int y, int width)
     {
         combo.DropDownStyle = ComboBoxStyle.DropDownList;
@@ -1059,6 +1105,7 @@ internal sealed class MainForm : Form
         combo.MaxDropDownItems = 8;
         combo.Location = new Point(x, y);
         combo.Size = new Size(width, 40);
+        combo.DropDown += (_, _) => SetComboDropDownWidth(combo);
         combo.DrawItem += (_, e) =>
         {
             if (e.Index < 0) return;
@@ -1067,7 +1114,8 @@ internal sealed class MainForm : Form
             using var brush = new SolidBrush(background);
             e.Graphics.FillRectangle(brush, e.Bounds);
 
-            var textBounds = new Rectangle(e.Bounds.X + 8, e.Bounds.Y, Math.Max(0, e.Bounds.Width - 30), e.Bounds.Height);
+            var leftInset = combo.RightToLeft == RightToLeft.Yes ? 36 : 8;
+            var textBounds = new Rectangle(e.Bounds.X + leftInset, e.Bounds.Y, Math.Max(0, e.Bounds.Width - leftInset - 10), e.Bounds.Height);
             TextRenderer.DrawText(
                 e.Graphics,
                 combo.Items[e.Index]?.ToString() ?? string.Empty,
