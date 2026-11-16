@@ -86,7 +86,7 @@ internal sealed class MainForm : Form
             BackColor = Background,
             Padding = Padding.Empty
         };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 96));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 88));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         Controls.Add(root);
 
@@ -109,31 +109,38 @@ internal sealed class MainForm : Form
 
     private Control BuildHeader()
     {
-        var panel = new Panel { Dock = DockStyle.Fill, BackColor = Navy, Padding = new Padding(22, 13, 22, 12) };
-        var brand = new Panel
+        var panel = new TableLayoutPanel
         {
-            Dock = DockStyle.Right,
-            Width = 266,
-            BackColor = Color.White,
+            Dock = DockStyle.Fill,
+            BackColor = Navy,
+            Padding = new Padding(16, 8, 16, 8),
+            ColumnCount = 2,
+            RowCount = 1,
             RightToLeft = RightToLeft.No
         };
-        brand.Paint += (_, e) =>
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 250));
+        panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var brand = new RoundedBrandPanel
         {
-            using var pen = new Pen(Color.FromArgb(224, 230, 238));
-            e.Graphics.DrawRectangle(pen, 0, 0, brand.Width - 1, brand.Height - 1);
+            Dock = DockStyle.Fill,
+            CornerRadius = 15,
+            Margin = new Padding(6, 3, 0, 3),
+            RightToLeft = RightToLeft.No
         };
 
         var icon = new PictureBox
         {
             Image = BrandAssets.IconImage,
-            Bounds = new Rectangle(201, 5, 58, 60),
+            Bounds = new Rectangle(190, 6, 50, 50),
             SizeMode = PictureBoxSizeMode.Zoom,
             BackColor = Color.Transparent
         };
         var wordmark = new PictureBox
         {
             Image = BrandAssets.WordmarkImage,
-            Bounds = new Rectangle(10, 7, 184, 33),
+            Bounds = new Rectangle(10, 7, 172, 30),
             SizeMode = PictureBoxSizeMode.Zoom,
             BackColor = Color.Transparent
         };
@@ -141,40 +148,55 @@ internal sealed class MainForm : Form
         {
             Text = "مرکز مدیریت سیم‌کارت و IMEI",
             ForeColor = Color.FromArgb(77, 91, 112),
-            Font = AppFonts.Ui(9.5f),
-            Bounds = new Rectangle(10, 41, 184, 24),
+            Font = AppFonts.Ui(8.8f),
+            Bounds = new Rectangle(10, 36, 172, 20),
             TextAlign = ContentAlignment.MiddleCenter,
             RightToLeft = RightToLeft.Yes
         };
         brand.Controls.Add(icon);
         brand.Controls.Add(wordmark);
         brand.Controls.Add(subtitle);
-        panel.Controls.Add(brand);
 
-        ConfigureCombo(_ports, 742, 27, 120);
-        ConfigureCombo(_baud, 615, 27, 115);
+        var controls = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = false,
+            Padding = new Padding(0, 8, 8, 0),
+            Margin = Padding.Empty,
+            RightToLeft = RightToLeft.No,
+            BackColor = Color.Transparent
+        };
+
+        ConfigureCombo(_ports, 0, 0, 120);
+        ConfigureCombo(_baud, 0, 0, 115);
         foreach (var baud in new[] { 9600, 19200, 38400, 57600, 115200 }) _baud.Items.Add(baud.ToString());
         _baud.SelectedItem = "9600";
-        panel.Controls.Add(_ports);
-        panel.Controls.Add(_baud);
+        _ports.Margin = new Padding(5, 0, 5, 0);
+        _baud.Margin = new Padding(5, 0, 5, 0);
 
         _scanButton.Text = "بازخوانی";
-        StyleButton(_scanButton, 525, 25, 90, 40, Color.FromArgb(49, 62, 83), Color.White);
+        StyleButton(_scanButton, 0, 0, 90, 40, Color.FromArgb(49, 62, 83), Color.White);
+        _scanButton.Margin = new Padding(5, 0, 5, 0);
         _scanButton.Click += (_, _) => RefreshPorts();
-        panel.Controls.Add(_scanButton);
 
         _connectButton.Text = "اتصال";
-        StyleButton(_connectButton, 415, 25, 100, 40, Accent, Color.White);
+        StyleButton(_connectButton, 0, 0, 100, 40, Accent, Color.White);
+        _connectButton.Margin = new Padding(5, 0, 5, 0);
         _connectButton.Click += async (_, _) => await ToggleConnectionAsync();
-        panel.Controls.Add(_connectButton);
 
         _connectionStatus.Text = "● قطع";
         _connectionStatus.ForeColor = Color.FromArgb(255, 143, 143);
         _connectionStatus.AutoSize = false;
-        _connectionStatus.Bounds = new Rectangle(205, 25, 195, 40);
+        _connectionStatus.Size = new Size(165, 40);
+        _connectionStatus.Margin = new Padding(5, 0, 5, 0);
         _connectionStatus.Font = AppFonts.Ui(10.5f);
         _connectionStatus.TextAlign = ContentAlignment.MiddleRight;
-        panel.Controls.Add(_connectionStatus);
+        _connectionStatus.RightToLeft = RightToLeft.Yes;
+
+        controls.Controls.AddRange([_ports, _baud, _scanButton, _connectButton, _connectionStatus]);
+        panel.Controls.Add(controls, 0, 0);
+        panel.Controls.Add(brand, 1, 0);
 
         return panel;
     }
@@ -188,14 +210,30 @@ internal sealed class MainForm : Form
         main.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
         page.Controls.Add(main);
 
-        var top = new Panel { Dock = DockStyle.Fill };
-        var heading = new Label { Text = "اطلاعات زنده دستگاه و سیم‌کارت", Font = AppFonts.Ui(14f, FontStyle.Bold), ForeColor = Navy, AutoSize = true, Location = new Point(850, 5) };
+        var top = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, RightToLeft = RightToLeft.No };
+        top.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 52));
+        top.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 48));
+        top.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var heading = new Label
+        {
+            Text = "اطلاعات زنده دستگاه و سیم‌کارت",
+            Font = AppFonts.Ui(14f, FontStyle.Bold),
+            ForeColor = Navy,
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleRight,
+            RightToLeft = RightToLeft.Yes,
+            AutoEllipsis = true,
+            Padding = new Padding(4, 0, 4, 0)
+        };
         _activity.Text = "برای شروع به پورت COM متصل شوید.";
         _activity.ForeColor = Muted;
-        _activity.AutoSize = true;
-        _activity.Location = new Point(25, 13);
-        top.Controls.Add(heading);
-        top.Controls.Add(_activity);
+        _activity.AutoSize = false;
+        _activity.Dock = DockStyle.Fill;
+        _activity.TextAlign = ContentAlignment.MiddleLeft;
+        _activity.AutoEllipsis = true;
+        _activity.Padding = new Padding(4, 0, 4, 0);
+        top.Controls.Add(_activity, 0, 0);
+        top.Controls.Add(heading, 1, 0);
         main.Controls.Add(top, 0, 0);
 
         var cards = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 4, Padding = new Padding(0, 6, 0, 6) };
@@ -293,13 +331,25 @@ internal sealed class MainForm : Form
         body.Controls.Add(BuildPickerRow("فایل Firmware", _firmwarePath, "انتخاب فایل", ChooseFirmware));
         body.Controls.Add(BuildPickerRow("ابزار رسمی فلش", _flasherPath, "انتخاب EXE", ChooseFlasher));
 
-        var args = new Panel { Dock = DockStyle.Fill, Height = 58 };
-        args.Controls.Add(new Label { Text = "آرگومان‌های ابزار", AutoSize = true, Location = new Point(950, 17), ForeColor = Navy });
+        var args = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, RightToLeft = RightToLeft.No };
+        args.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        args.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 185));
+        args.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var argsLabel = new Label
+        {
+            Text = "آرگومان‌های ابزار",
+            Dock = DockStyle.Fill,
+            ForeColor = Navy,
+            TextAlign = ContentAlignment.MiddleLeft,
+            RightToLeft = RightToLeft.Yes,
+            Padding = new Padding(8, 0, 8, 0)
+        };
         _flasherArguments.Text = "--port {PORT} --baud {BAUD} --firmware {FIRMWARE}";
         _flasherArguments.RightToLeft = RightToLeft.No;
-        _flasherArguments.Location = new Point(160, 12);
-        _flasherArguments.Width = 760;
-        args.Controls.Add(_flasherArguments);
+        _flasherArguments.Dock = DockStyle.Fill;
+        _flasherArguments.Margin = new Padding(8, 12, 8, 12);
+        args.Controls.Add(_flasherArguments, 0, 0);
+        args.Controls.Add(argsLabel, 1, 0);
         body.Controls.Add(args);
 
         _firmwareDetails.Dock = DockStyle.Fill;
@@ -376,7 +426,13 @@ internal sealed class MainForm : Form
         _imeiVerdict.Padding = new Padding(6, 4, 6, 0);
         body.Controls.Add(_imeiVerdict, 0, 2);
 
-        var options = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        var options = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.RightToLeft,
+            WrapContents = true,
+            AutoScroll = true
+        };
         _unlockWrite.Text = "مسئولیت و مالکیت دستگاه را می‌پذیرم و نوشتن IMEI را فعال می‌کنم";
         _unlockWrite.AutoSize = true;
         _unlockWrite.ForeColor = Color.FromArgb(150, 60, 45);
@@ -414,7 +470,7 @@ internal sealed class MainForm : Form
                          "در هر تلاش، پاسخ واقعی ماژول و نتیجه بازخوانی همین‌جا ثبت می‌شود.";
         body.Controls.Add(_writeLog, 0, 4);
 
-        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = true };
         _writeButton.Text = "نوشتن و بازخوانی IMEI";
         _writeButton.Width = 210;
         _writeButton.Height = 38;
@@ -437,7 +493,7 @@ internal sealed class MainForm : Form
         actions.Controls.AddRange([_writeButton, stop, save]);
         body.Controls.Add(actions, 0, 5);
 
-        var tools = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        var tools = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = true };
         _diagnoseButton.Text = "1) تشخیص قابلیت‌ها";
         _diagnoseButton.Width = 165;
         _diagnoseButton.Height = 34;
@@ -804,22 +860,30 @@ internal sealed class MainForm : Form
         body.RowStyles.Add(new RowStyle(SizeType.Absolute, 60));
         page.Controls.Add(body);
 
-        var head = new Panel { Dock = DockStyle.Fill };
+        var head = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2 };
+        head.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        head.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         head.Controls.Add(new Label
         {
             Text = "خواندن داده کارت",
             Font = AppFonts.Ui(13f, FontStyle.Bold),
             ForeColor = Navy,
-            AutoSize = true,
-            Location = new Point(850, 8)
-        });
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleRight,
+            RightToLeft = RightToLeft.Yes,
+            AutoEllipsis = true,
+            Padding = new Padding(8, 0, 8, 0)
+        }, 0, 0);
         head.Controls.Add(new Label
         {
             Text = "SIM800L فقط کارت فیزیکی را می‌خواند. eSIM/eUICC نیاز به ابزار LPA/APDU جداگانه دارد.",
             ForeColor = Muted,
-            AutoSize = true,
-            Location = new Point(540, 40)
-        });
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleRight,
+            RightToLeft = RightToLeft.Yes,
+            AutoEllipsis = true,
+            Padding = new Padding(8, 0, 8, 0)
+        }, 0, 1);
         body.Controls.Add(head, 0, 0);
 
         _cardVerdict.Dock = DockStyle.Fill;
@@ -883,12 +947,18 @@ internal sealed class MainForm : Form
     private TabPage BuildGuide()
     {
         var page = NewPage("راهنما و ایمنی");
-        var text = new Label
+        var text = new RichTextBox
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(32),
+            Margin = new Padding(24),
             Font = AppFonts.Ui(11f),
             ForeColor = Navy,
+            BackColor = Background,
+            BorderStyle = BorderStyle.None,
+            ReadOnly = true,
+            ScrollBars = RichTextBoxScrollBars.Vertical,
+            RightToLeft = RightToLeft.Yes,
+            DetectUrls = false,
             Text = "اتصال پیشنهادی\r\n\r\n" +
                    "• منبع تغذیه پایدار ۳٫۷ تا ۴٫۲ ولت با تحمل پیک حدود ۲ آمپر\r\n" +
                    "• زمین مشترک بین USB‑TTL و SIM800L و اتصال ضربدری TX/RX\r\n" +
@@ -913,7 +983,12 @@ internal sealed class MainForm : Form
         return page;
     }
 
-    private static TabPage NewPage(string title) => new(title) { BackColor = Background, Padding = new Padding(4) };
+    private static TabPage NewPage(string title) => new(title)
+    {
+        BackColor = Background,
+        Padding = new Padding(4),
+        AutoScroll = true
+    };
 
     private static void ConfigureCombo(ComboBox combo, int x, int y, int width)
     {
@@ -1048,17 +1123,37 @@ internal sealed class MainForm : Form
 
     private Control BuildPickerRow(string label, TextBox target, string buttonText, Action handler)
     {
-        var row = new Panel { Dock = DockStyle.Fill, Height = 58 };
-        row.Controls.Add(new Label { Text = label, AutoSize = true, Location = new Point(950, 17), ForeColor = Navy });
+        var row = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 3,
+            RowCount = 1,
+            RightToLeft = RightToLeft.No
+        };
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 185));
+        row.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var caption = new Label
+        {
+            Text = label,
+            Dock = DockStyle.Fill,
+            ForeColor = Navy,
+            TextAlign = ContentAlignment.MiddleLeft,
+            RightToLeft = RightToLeft.Yes,
+            Padding = new Padding(8, 0, 8, 0)
+        };
         target.ReadOnly = true;
         target.RightToLeft = RightToLeft.No;
-        target.Location = new Point(280, 12);
-        target.Width = 640;
-        row.Controls.Add(target);
+        target.Dock = DockStyle.Fill;
+        target.Margin = new Padding(8, 12, 8, 12);
         var button = NewActionButton(buttonText, Navy, 110);
-        button.Location = new Point(150, 7);
+        button.Dock = DockStyle.Fill;
+        button.Margin = new Padding(8);
         button.Click += (_, _) => handler();
-        row.Controls.Add(button);
+        row.Controls.Add(button, 0, 0);
+        row.Controls.Add(target, 1, 0);
+        row.Controls.Add(caption, 2, 0);
         return row;
     }
 
