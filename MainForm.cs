@@ -72,6 +72,7 @@ internal sealed class MainForm : Form
 
         BuildLayout();
         AppFonts.ApplyNativeFonts(this);
+        NormalizeInteractiveControls(this);
         RefreshPorts();
         FormClosing += (_, _) => _device.Dispose();
     }
@@ -130,17 +131,43 @@ internal sealed class MainForm : Form
             RightToLeft = RightToLeft.No
         };
 
+        var brandLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 2,
+            RowCount = 1,
+            Padding = new Padding(8, 4, 8, 4),
+            BackColor = Color.Transparent,
+            RightToLeft = RightToLeft.No
+        };
+        brandLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 54));
+        brandLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        brandLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
         var icon = new PictureBox
         {
             Image = BrandAssets.IconImage,
-            Bounds = new Rectangle(190, 6, 50, 50),
+            Dock = DockStyle.Fill,
+            Margin = new Padding(1, 2, 5, 2),
             SizeMode = PictureBoxSizeMode.Zoom,
             BackColor = Color.Transparent
         };
+        var brandText = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            BackColor = Color.Transparent
+        };
+        brandText.RowStyles.Add(new RowStyle(SizeType.Percent, 58));
+        brandText.RowStyles.Add(new RowStyle(SizeType.Percent, 42));
         var wordmark = new PictureBox
         {
             Image = BrandAssets.WordmarkImage,
-            Bounds = new Rectangle(10, 7, 172, 30),
+            Dock = DockStyle.Fill,
+            Margin = new Padding(4, 2, 4, 0),
             SizeMode = PictureBoxSizeMode.Zoom,
             BackColor = Color.Transparent
         };
@@ -149,13 +176,16 @@ internal sealed class MainForm : Form
             Text = "مرکز مدیریت سیم‌کارت و IMEI",
             ForeColor = Color.FromArgb(77, 91, 112),
             Font = AppFonts.Ui(8.8f),
-            Bounds = new Rectangle(10, 36, 172, 20),
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0, 0, 0, 1),
             TextAlign = ContentAlignment.MiddleCenter,
             RightToLeft = RightToLeft.Yes
         };
-        brand.Controls.Add(icon);
-        brand.Controls.Add(wordmark);
-        brand.Controls.Add(subtitle);
+        brandText.Controls.Add(wordmark, 0, 0);
+        brandText.Controls.Add(subtitle, 0, 1);
+        brandLayout.Controls.Add(icon, 0, 0);
+        brandLayout.Controls.Add(brandText, 1, 0);
+        brand.Controls.Add(brandLayout);
 
         var controls = new FlowLayoutPanel
         {
@@ -378,10 +408,10 @@ internal sealed class MainForm : Form
         body.RowStyles.Add(new RowStyle(SizeType.Absolute, 62));
         body.RowStyles.Add(new RowStyle(SizeType.Absolute, 62));
         body.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
         body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
         body.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         page.Controls.Add(body);
 
@@ -446,8 +476,8 @@ internal sealed class MainForm : Form
         _verifyPersistence.Text = "تأیید پایداری بعد از نوشتن (ری‌استارت + بازخوانی)";
         _verifyPersistence.AutoSize = true;
         _verifyPersistence.Checked = true;
-        _strategyPicker.DropDownStyle = ComboBoxStyle.DropDownList;
-        _strategyPicker.Width = 330;
+        ConfigureCombo(_strategyPicker, 0, 0, 330);
+        _strategyPicker.RightToLeft = RightToLeft.Yes;
         _strategyPicker.Items.Add("خودکار (همه استراتژی‌ها به‌ترتیب)");
         foreach (var strategy in ImeiWriter.Strategies) _strategyPicker.Items.Add(strategy.Title);
         _strategyPicker.SelectedIndex = 0;
@@ -473,7 +503,7 @@ internal sealed class MainForm : Form
         var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = true };
         _writeButton.Text = "نوشتن و بازخوانی IMEI";
         _writeButton.Width = 210;
-        _writeButton.Height = 38;
+        _writeButton.Height = 40;
         _writeButton.BackColor = Color.FromArgb(200, 90, 60);
         _writeButton.ForeColor = Color.White;
         _writeButton.FlatStyle = FlatStyle.Flat;
@@ -496,7 +526,7 @@ internal sealed class MainForm : Form
         var tools = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = true };
         _diagnoseButton.Text = "1) تشخیص قابلیت‌ها";
         _diagnoseButton.Width = 165;
-        _diagnoseButton.Height = 34;
+        _diagnoseButton.Height = 40;
         _diagnoseButton.BackColor = Color.FromArgb(70, 92, 125);
         _diagnoseButton.ForeColor = Color.White;
         _diagnoseButton.FlatStyle = FlatStyle.Flat;
@@ -506,7 +536,7 @@ internal sealed class MainForm : Form
 
         _selfTestButton.Text = "2) خودآزمون بی‌خطر";
         _selfTestButton.Width = 155;
-        _selfTestButton.Height = 34;
+        _selfTestButton.Height = 40;
         _selfTestButton.BackColor = Color.FromArgb(70, 92, 125);
         _selfTestButton.ForeColor = Color.White;
         _selfTestButton.FlatStyle = FlatStyle.Flat;
@@ -516,7 +546,7 @@ internal sealed class MainForm : Form
 
         _verifyButton.Text = "3) بررسی پایداری";
         _verifyButton.Width = 140;
-        _verifyButton.Height = 34;
+        _verifyButton.Height = 40;
         _verifyButton.BackColor = Color.FromArgb(70, 92, 125);
         _verifyButton.ForeColor = Color.White;
         _verifyButton.FlatStyle = FlatStyle.Flat;
@@ -990,11 +1020,37 @@ internal sealed class MainForm : Form
         AutoScroll = true
     };
 
+    private static void NormalizeInteractiveControls(Control parent)
+    {
+        foreach (Control control in parent.Controls)
+        {
+            switch (control)
+            {
+                case Button button:
+                    button.Height = 40;
+                    button.MinimumSize = new Size(button.MinimumSize.Width, 40);
+                    break;
+                case TextBox textBox when !textBox.Multiline:
+                    textBox.AutoSize = false;
+                    textBox.Height = 40;
+                    textBox.MinimumSize = new Size(textBox.MinimumSize.Width, 40);
+                    break;
+                case ComboBox combo:
+                    combo.ItemHeight = 32;
+                    combo.Height = 40;
+                    combo.MinimumSize = new Size(combo.MinimumSize.Width, 40);
+                    break;
+            }
+
+            if (control.HasChildren) NormalizeInteractiveControls(control);
+        }
+    }
+
     private static void ConfigureCombo(ComboBox combo, int x, int y, int width)
     {
         combo.DropDownStyle = ComboBoxStyle.DropDownList;
         combo.DrawMode = DrawMode.OwnerDrawFixed;
-        combo.ItemHeight = 30;
+        combo.ItemHeight = 32;
         combo.Font = AppFonts.Ui(10.5f);
         combo.FlatStyle = FlatStyle.Flat;
         combo.BackColor = Surface;
@@ -1002,7 +1058,7 @@ internal sealed class MainForm : Form
         combo.RightToLeft = RightToLeft.No;
         combo.MaxDropDownItems = 8;
         combo.Location = new Point(x, y);
-        combo.Size = new Size(width, 38);
+        combo.Size = new Size(width, 40);
         combo.DrawItem += (_, e) =>
         {
             if (e.Index < 0) return;
