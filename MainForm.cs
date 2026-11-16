@@ -46,7 +46,13 @@ internal sealed class MainForm : Form
     private readonly TextBox _writeLog = new();
     private readonly Label _writeVerdict = new();
     private readonly Button _writeButton = new();
+    private readonly CheckBox _verifyPersistence = new();
+    private readonly Button _diagnoseButton = new();
+    private readonly Button _selfTestButton = new();
+    private readonly Button _verifyButton = new();
     private bool _writing;
+    private CapabilityReport? _capabilities;
+    private string _lastWrittenImei = string.Empty;
     private CancellationTokenSource? _writeCts;
     private const string InitialLogPlaceholder = "برای دیدن لاگ، دکمه «ذخیره فایل لاگ» را بزنید یا از تب ترمینال AT فرمانی ارسال کنید. داده شخصی به‌صورت خودکار ستاره‌دار می‌شود.";
 
@@ -295,13 +301,14 @@ internal sealed class MainForm : Form
     private TabPage BuildImeiLab()
     {
         var page = NewPage("بررسی و نوشتن IMEI");
-        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 7, Padding = new Padding(16) };
+        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 8, Padding = new Padding(16) };
         body.RowStyles.Add(new RowStyle(SizeType.Absolute, 62));
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 66));
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 62));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));
         body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
         body.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         page.Controls.Add(body);
 
@@ -357,12 +364,15 @@ internal sealed class MainForm : Form
         _persistProfile.Text = "ذخیره با AT&W";
         _persistProfile.AutoSize = true;
         _persistProfile.Checked = true;
+        _verifyPersistence.Text = "تأیید پایداری بعد از نوشتن (ری‌استارت + بازخوانی)";
+        _verifyPersistence.AutoSize = true;
+        _verifyPersistence.Checked = true;
         _strategyPicker.DropDownStyle = ComboBoxStyle.DropDownList;
         _strategyPicker.Width = 330;
         _strategyPicker.Items.Add("خودکار (همه استراتژی‌ها به‌ترتیب)");
         foreach (var strategy in ImeiWriter.Strategies) _strategyPicker.Items.Add(strategy.Title);
         _strategyPicker.SelectedIndex = 0;
-        foreach (var control in new Control[] { _unlockWrite, _removeSim, _persistProfile, _strategyPicker })
+        foreach (var control in new Control[] { _unlockWrite, _removeSim, _persistProfile, _verifyPersistence, _strategyPicker })
         {
             control.Margin = new Padding(8, 8, 8, 0);
             options.Controls.Add(control);
@@ -404,14 +414,197 @@ internal sealed class MainForm : Form
         actions.Controls.AddRange([_writeButton, stop, save]);
         body.Controls.Add(actions, 0, 5);
 
+        var tools = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        _diagnoseButton.Text = "1) تشخیص قابلیت‌ها";
+        _diagnoseButton.Width = 165;
+        _diagnoseButton.Height = 34;
+        _diagnoseButton.BackColor = Color.FromArgb(70, 92, 125);
+        _diagnoseButton.ForeColor = Color.White;
+        _diagnoseButton.FlatStyle = FlatStyle.Flat;
+        _diagnoseButton.FlatAppearance.BorderSize = 0;
+        _diagnoseButton.Margin = new Padding(8, 2, 8, 0);
+        _diagnoseButton.Click += async (_, _) => await DiagnoseAsync();
+
+        _selfTestButton.Text = "2) خودآزمون بی‌خطر";
+        _selfTestButton.Width = 155;
+        _selfTestButton.Height = 34;
+        _selfTestButton.BackColor = Color.FromArgb(70, 92, 125);
+        _selfTestButton.ForeColor = Color.White;
+        _selfTestButton.FlatStyle = FlatStyle.Flat;
+        _selfTestButton.FlatAppearance.BorderSize = 0;
+        _selfTestButton.Margin = new Padding(8, 2, 8, 0);
+        _selfTestButton.Click += async (_, _) => await SelfTestAsync();
+
+        _verifyButton.Text = "3) بررسی پایداری";
+        _verifyButton.Width = 140;
+        _verifyButton.Height = 34;
+        _verifyButton.BackColor = Color.FromArgb(70, 92, 125);
+        _verifyButton.ForeColor = Color.White;
+        _verifyButton.FlatStyle = FlatStyle.Flat;
+        _verifyButton.FlatAppearance.BorderSize = 0;
+        _verifyButton.Margin = new Padding(8, 2, 8, 0);
+        _verifyButton.Click += async (_, _) => await VerifyPersistenceAsync();
+
+        tools.Controls.AddRange([_diagnoseButton, _selfTestButton, _verifyButton]);
+        body.Controls.Add(tools, 0, 6);
+
         _writeVerdict.Text = "قفل نوشتن بسته است؛ ابتدا چک‌باکس بالا را انتخاب کنید.";
         _writeVerdict.ForeColor = Muted;
         _writeVerdict.AutoSize = true;
         _writeVerdict.Dock = DockStyle.Fill;
         _writeVerdict.Padding = new Padding(6, 4, 6, 0);
-        body.Controls.Add(_writeVerdict, 0, 6);
+        body.Controls.Add(_writeVerdict, 0, 7);
         return page;
     }
+
+    private async Task DiagnoseAsync()
+    {
+        if (!EnsureConnected()) return;
+        try
+        {
+            SetBusy(true);
+            _writeLog.Clear();
+            AppendWriteLog("در حال تشخیص قابلیت‌های firmware… (هیچ فرمان نوشتنی ارسال نمی‌شود)");
+            var diagnostics = new ImeiDiagnostics(_device);
+            _capabilities = await diagnostics.InspectAsync();
+
+            AppendWriteLog($"مدل: {_capabilities.Model}");
+            AppendWriteLog($"نسخه: {_capabilities.Revision}");
+            AppendWriteLog($"IMEI فعلی: {(_capabilities.ImeiNow.Length == 15 ? _capabilities.ImeiNow : "خوانده نشد")}");
+            AppendWriteLog($"سیم‌کارت: {(_capabilities.SimPresent ? "داخل ماژول" : "خارج")}");
+            AppendWriteLog($"EGMR خواندنی: {YesNo(_capabilities.EgmrReadable)} | EGMR نوشتنی: {YesNo(_capabilities.EgmrWritable)}");
+            AppendWriteLog($"SIMEI پشتیبانی: {YesNo(_capabilities.SimeiSupported)}");
+            foreach (var finding in _capabilities.Findings) AppendWriteLog("• " + finding);
+            AppendWriteLog(_capabilities.Recommendation);
+
+            if (_capabilities.RecommendedStrategy is not null)
+            {
+                var index = ImeiWriter.Strategies.ToList().IndexOf(_capabilities.RecommendedStrategy);
+                if (index >= 0) _strategyPicker.SelectedIndex = index + 1;
+            }
+
+            _writeVerdict.ForeColor = _capabilities.AnyWritePath ? Color.FromArgb(0, 130, 110) : Color.FromArgb(180, 62, 62);
+            _writeVerdict.Text = _capabilities.AnyWritePath
+                ? "تشخیص تمام شد. مرحله بعد: خودآزمون بی‌خطر (2) را بزنید."
+                : "هیچ مسیر AT برای نوشتن پیدا نشد. گزارش را ذخیره کنید تا مسیر فلش بررسی شود.";
+            _activity.Text = "تشخیص قابلیت‌ها انجام شد.";
+        }
+        catch (Exception ex)
+        {
+            AppendWriteLog("خطای تشخیص: " + ex.Message);
+            _writeVerdict.ForeColor = Color.FromArgb(180, 62, 62);
+            _writeVerdict.Text = "تشخیص ناموفق بود: " + ex.Message;
+        }
+        finally { SetBusy(false); }
+    }
+
+    private async Task SelfTestAsync()
+    {
+        if (_writing || !EnsureConnected()) return;
+        if (!_unlockWrite.Checked)
+        {
+            MessageBox.Show(this, "ابتدا قفل نوشتن را باز کنید.", "قفل است", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        if (!_removeSim.Checked)
+        {
+            MessageBox.Show(this, "برای خودآزمون هم سیم‌کارت را خارج کنید.", "سیم‌کارت", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var strategy = _strategyPicker.SelectedIndex > 0
+            ? ImeiWriter.Strategies[_strategyPicker.SelectedIndex - 1]
+            : _capabilities?.RecommendedStrategy ?? ImeiWriter.Strategies[0];
+
+        var confirm = MessageBox.Show(this,
+            $"خودآزمون «{strategy.Title}» انجام می‌شود: همان IMEI فعلی نوشته و بازخوانی می‌شود؛ " +
+            "بنابراین IMEI دستگاه شما تغییر نمی‌کند و فقط پذیرش فرمان را می‌سنجد. ادامه؟",
+            "خودآزمون بی‌خطر", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+        if (confirm != DialogResult.Yes) return;
+
+        _writing = true;
+        _writeButton.Enabled = false;
+        _writeCts = new CancellationTokenSource();
+        SetBusy(true);
+        try
+        {
+            var writer = new ImeiWriter(_device, (command, response) => AppendWriteLog($"  {command} → {Flatten(response)}"));
+            var progress = new Progress<string>(message => AppendWriteLog("» " + message));
+            var result = await writer.SelfTestAsync(strategy, progress, _writeCts.Token);
+
+            AppendWriteLog(string.Empty);
+            var rejected = result.Steps.Count > 0 && result.Steps[^1].Status == StepStatus.Error;
+            AppendWriteLog(rejected
+                ? $"نتیجه خودآزمون: ❌ این firmware فرمان «{strategy.Title}» را نپذیرفت."
+                : result.Verified
+                    ? "نتیجه خودآزمون: ✅ فرمان پذیرفته شد و IMEI فعلی دست‌نخورده و پایدار است."
+                    : "نتیجه خودآزمون: ⚠️ فرمان اجرا شد اما بازخوانی همان مقدار را برنگرداند.");
+
+            _writeVerdict.ForeColor = rejected ? Color.FromArgb(180, 62, 62) : Color.FromArgb(0, 130, 110);
+            _writeVerdict.Text = rejected
+                ? "این استراتژی روی firmware شما کار نمی‌کند؛ استراتژی دیگری را امتحان کنید."
+                : "خودآزمون موفق بود؛ الان می‌توانید IMEI هدف را بنویسید (دکمه نارنجی).";
+        }
+        catch (Exception ex)
+        {
+            AppendWriteLog("خطای خودآزمون: " + ex.Message);
+        }
+        finally
+        {
+            _writing = false;
+            _writeCts?.Dispose();
+            _writeCts = null;
+            SetBusy(false);
+            _writeButton.Enabled = _unlockWrite.Checked;
+        }
+    }
+
+    private async Task VerifyPersistenceAsync()
+    {
+        if (!EnsureConnected()) return;
+        var target = _lastWrittenImei.Length == 15
+            ? _lastWrittenImei
+            : ImeiWriter.ExtractImei(await _device.SendAsync("AT+GSN", 2500));
+        if (target.Length != 15)
+        {
+            MessageBox.Show(this, "IMEI هدف مشخص نیست؛ ابتدا بنویسید یا IMEI را دستی وارد کنید.", "تأیید پایداری", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        try
+        {
+            SetBusy(true);
+            AppendWriteLog($"بررسی پایداری برای {target} — ماژول ری‌استارت می‌شود.");
+            var verifier = new PersistenceVerifier(_device);
+            var progress = new Progress<string>(message => AppendWriteLog("» " + message));
+            var result = await verifier.VerifyAsync(target, WaitForManualPowerCycle, progress);
+
+            foreach (var line in result.Detail.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries))
+                AppendWriteLog(line);
+
+            _writeVerdict.ForeColor = result.Persisted ? Color.FromArgb(0, 130, 110) : Color.FromArgb(180, 62, 62);
+            _writeVerdict.Text = result.Persisted
+                ? "✅ پایدار است: IMEI جدید پس از ری‌استارت هم سر جایش مانده."
+                : "⚠️ پایدار نیست: IMEI پس از ری‌استارت برگشت. گزارش را ذخیره کنید.";
+            await LoadSnapshotAsync();
+        }
+        catch (Exception ex)
+        {
+            AppendWriteLog("خطای بررسی پایداری: " + ex.Message);
+        }
+        finally { SetBusy(false); }
+    }
+
+    /// <summary>در حالت‌هایی که ری‌استارت نرم مطمئن نیست، از کاربر می‌خواهد برق را دستی قطع/وصل کند.</summary>
+    private void WaitForManualPowerCycle()
+    {
+        MessageBox.Show(this,
+            "لطفاً تغذیه ماژول را ۳ ثانیه قطع و سپس وصل کنید و منتظر بمانید تا چراغ شبکه دوباره چشمک بزند. " +
+            "سپس OK را بزنید تا بازخوانی ادامه یابد.",
+            "قطع و وصل برق", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private static string YesNo(bool value) => value ? "بله" : "خیر";
 
     private void ToggleImeiWrite()
     {
@@ -468,12 +661,14 @@ internal sealed class MainForm : Form
             });
 
             string current = string.Empty;
+            var verifiedByReadback = false;
             if (_strategyPicker.SelectedIndex <= 0)
             {
                 var outcome = await writer.AutoWriteAsync(target, _persistProfile.Checked, progress, _writeCts.Token);
                 current = outcome.Success?.ImeiAfter ?? outcome.ImeiBefore;
                 _writeLog.Text = outcome.Report;
-                FinishWrite(outcome.Success is not null, outcome.Success?.Strategy.Title ?? "—", outcome.ImeiBefore, current, target);
+                verifiedByReadback = outcome.Success is not null;
+                FinishWrite(verifiedByReadback, outcome.Success?.Strategy.Title ?? "—", outcome.ImeiBefore, current, target);
             }
             else
             {
@@ -482,7 +677,25 @@ internal sealed class MainForm : Form
                 var result = await writer.WriteAsync(strategy, target, before, _persistProfile.Checked, progress, _writeCts.Token);
                 current = result.ImeiAfter;
                 _writeLog.Text = ImeiWriter.BuildReport([result], result.Verified ? result : null, before, target);
+                verifiedByReadback = result.Verified;
                 FinishWrite(result.Verified, strategy.Title, before, current, target);
+            }
+
+            if (verifiedByReadback && _verifyPersistence.Checked)
+            {
+                AppendWriteLog(string.Empty);
+                AppendWriteLog("— بررسی پایداری خودکار (ری‌استارت + بازخوانی) —");
+                var verifier = new PersistenceVerifier(_device);
+                var verifyProgress = new Progress<string>(message => AppendWriteLog("» " + message));
+                var persistence = await verifier.VerifyAsync(target, WaitForManualPowerCycle, verifyProgress, _writeCts.Token);
+                foreach (var line in persistence.Detail.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries))
+                    AppendWriteLog(line);
+
+                _lastWrittenImei = persistence.Persisted ? target : persistence.ImeiAfterRestart;
+                _writeVerdict.ForeColor = persistence.Persisted ? Color.FromArgb(0, 130, 110) : Color.FromArgb(180, 62, 62);
+                _writeVerdict.Text = persistence.Persisted
+                    ? $"✅ تضمین عملی: IMEI {target} نوشته شد و بعد از ری‌استارت هم پایدار ماند."
+                    : "⚠️ IMEI نوشته شد اما پس از ری‌استارت برنگشت (ناپایدار). گزارش را ذخیره کنید.";
             }
 
             await LoadSnapshotAsync();
@@ -514,7 +727,8 @@ internal sealed class MainForm : Form
         if (verified)
         {
             _writeVerdict.ForeColor = Color.FromArgb(0, 130, 110);
-            _writeVerdict.Text = $"✓ موفق — {strategyTitle} — IMEI اکنون {after} است. ماژول را یک بار ری‌استارت کنید.";
+            _lastWrittenImei = after;
+            _writeVerdict.Text = $"✓ موفق — {strategyTitle} — IMEI اکنون {after} است. مرحله بعد: بررسی پایداری (3).";
             _activity.Text = $"IMEI به {after} تغییر کرد و بازخوانی تأیید شد.";
         }
         else
