@@ -52,28 +52,28 @@ internal sealed class ImeiWriter
     [
         new(WriteStrategyKind.CfwToggle,
             "cfw-egmr",
-            "١) خاموش‌کردن رادیو + EGMR (الگوی رایج SIM800/SIM900)",
+            "1) خاموش‌کردن رادیو + EGMR (الگوی رایج SIM800 / SIM900)",
             ["AT+CFUN=0", "AT+EGMR=0,7", "AT+EGMR=1,7,\"{IMEI}\"", "AT+CFUN=1"],
             "ابتدا AT+EGMR=0,7 خوانده می‌شود؛ اگر firmware پشتیبانی نکند، همان‌جا متوقف می‌شود.",
             SimMustBeRemoved: true),
 
         new(WriteStrategyKind.Egmr,
             "egmr",
-            "٢) نوشتن مستقیم AT+EGMR",
+            "2) نوشتن مستقیم AT+EGMR",
             ["AT+EGMR=1,7,\"{IMEI}\""],
             "روی بعضی ریویژن‌ها بدون خاموش‌کردن رادیو کار می‌کند.",
             SimMustBeRemoved: true),
 
         new(WriteStrategyKind.Simei,
             "simei",
-            "٣) فرمان اختصاصی SIMCom: AT+SIMEI",
+            "3) فرمان اختصاصی SIMCom: AT+SIMEI",
             ["AT+SIMEI?", "AT+SIMEI=\"{IMEI}\""],
             "در بعضی firmwareهای SIM800C/SIM800L وجود دارد و تعداد نوشتن را محدود می‌کند (معمولاً ۳ بار).",
             SimMustBeRemoved: false),
 
         new(WriteStrategyKind.QcfgQuectel,
             "qcfg",
-            "٤) AT+QCFG (مخصوص Quectel — فقط برای امتحان)",
+            "4) AT+QCFG (مخصوص Quectel — فقط برای امتحان)",
             ["AT+QCFG=\"imei\",1", "AT+QCFG=\"imei\",\"{IMEI}\"", "AT+QCFG=\"imei\",2"],
             "این فرمان متعلق به Quectel است؛ روی SIM800L تقریباً همیشه ERROR می‌دهد و آسیبی هم نمی‌زند.",
             QuectelOnly: true)
@@ -115,6 +115,21 @@ internal sealed class ImeiWriter
             return StepStatus.Timeout;
         if (response.Contains("ERROR", StringComparison.OrdinalIgnoreCase)) return StepStatus.Error;
         return StepStatus.Ok;
+    }
+
+    /// <summary>
+    /// خودآزمون بی‌خطر: به‌جای IMEI جدید، همان IMEI فعلی نوشته می‌شود. اگر ماژول OK بدهد یعنی
+    /// فرمان نوشتن روی این firmware کار می‌کند و مقدار فعلی هم دست‌نخورده می‌ماند. هیچ شمارنده‌ای هدر نمی‌رود.
+    /// </summary>
+    public async Task<WriteResult> SelfTestAsync(WriteStrategy strategy, IProgress<string>? progress = null, CancellationToken ct = default)
+    {
+        var current = await ReadImeiAsync(ct);
+        if (current.Length != 15)
+            throw new InvalidOperationException("IMEI فعلی خوانده نشد؛ ابتدا اتصال و تغذیه ماژول را بررسی کنید.");
+
+        progress?.Report($"خودآزمون «{strategy.Title}» با IMEI فعلی ({current}) — بدون تغییر واقعی.");
+        var result = await WriteAsync(strategy, current, current, persistProfile: false, progress, ct);
+        return result;
     }
 
     public async Task<string> ReadImeiAsync(CancellationToken ct = default)

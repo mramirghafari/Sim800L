@@ -141,6 +141,26 @@ internal static class SelfTests
         Check("ساختار لاگ پس از پاک‌سازی حفظ می‌شود", redacted.Contains("AT+CGSN") && redacted.Contains("OK"));
         Check("لاگ خالی بدون خطا پاک‌سازی می‌شود", SessionLogger.Redact(null) == string.Empty);
 
+        // --- تشخیص قابلیت و پایداری ------------------------------------------
+        var capability = new CapabilityReport("SIM800L", "Revision:1", true, true, false, false, false,
+            "490154203237518", ["نمونه"], ImeiWriter.Strategies[0], "raw");
+        Check("تشخیص با EGMR نوشتنی، مسیر AT را تأیید می‌کند", capability.AnyWritePath);
+        Check("پیشنهاد تشخیص، استراتژی درست را برمی‌گرداند",
+            capability.Recommendation.Contains("EGMR"));
+
+        var noPath = capability with { EgmrWritable = false, SimeiSupported = false, RecommendedStrategy = null };
+        Check("بدون مسیر AT، تشخیص صریحاً اعلام می‌کند", !noPath.AnyWritePath && noPath.Recommendation.Contains("فلش"));
+
+        var persisted = new PersistenceResult("352099001761481", "352099001761481", "352099001761481", true, true, "ok");
+        Check("پایداری وقتی مقدار بعد از ری‌استارت یکی است تأیید می‌شود", persisted.Persisted);
+
+        var volatileResult = new PersistenceResult("352099001761481", "352099001761481", "490154203237518", true, false, "revert");
+        Check("برگشت مقدار پس از ری‌استارت ناپایدار محسوب می‌شود", !volatileResult.Persisted);
+
+        var neverWritten = new PersistenceResult("352099001761481", "", "", false, false, "port error");
+        Check("وقتی هیچ مقداری خوانده نشده، نتیجه به‌عنوان «نوشته نشده» علامت می‌خورد",
+            neverWritten.ExpectedNeverWritten);
+
         // --- محافظ AT --------------------------------------------------------
         AtGuard.ImeiWriteUnlocked = false;
         Check("فرمان معمولی AT مجاز است", AtGuard.IsAllowed("AT+CSQ", out _));
