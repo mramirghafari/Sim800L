@@ -65,6 +65,19 @@ internal sealed class MainForm : Form
     private readonly Button _loanerBuild = new();
     private readonly Button _loanerApply = new();
     private readonly Button _loanerReadSelf = new();
+    private readonly Button _phoneDetect = new();
+    private readonly Button _phonePlan = new();
+    private readonly Button _phoneOpenTool = new();
+    private readonly Button _activationCompare = new();
+    private readonly TextBox _phoneAdbPath = new();
+    private readonly TextBox _phoneImei = new();
+    private readonly TextBox _phoneImei2 = new();
+    private readonly TextBox _phoneEid = new();
+    private readonly ComboBox _phoneVendor = new();
+    private readonly TextBox _phoneOutput = new();
+    private readonly Label _phoneVerdict = new();
+    private PhoneIdentity? _phoneIdentity;
+    private DeviceAccessKind _phoneAccess = DeviceAccessKind.None;
     private readonly TextBox _bindKey = new();
     private readonly TextBox _bindImei = new();
     private readonly TextBox _bindLabel = new();
@@ -142,6 +155,7 @@ internal sealed class MainForm : Form
         _tabs.TabPages.Add(BuildLedger());
         _tabs.TabPages.Add(BuildSimProfiles());
         _tabs.TabPages.Add(BuildLoaner());
+        _tabs.TabPages.Add(BuildPhoneIdentity());
         _tabs.TabPages.Add(BuildLogs());
         _tabs.TabPages.Add(BuildGuide());
         root.Controls.Add(_tabs, 0, 1);
@@ -2015,6 +2029,239 @@ internal sealed class MainForm : Form
             _loanerVerdict.Text = "خطا: " + ex.Message;
         }
         finally { SetBusy(false); }
+    }
+
+    /// <summary>
+    /// تب «هویت روی گوشی»: پروفایل چیپست، ابزار سطح سرویس و ترتیب واقعی نوشتن IMEI روی خود گوشی.
+    /// برای اندروید (MTK/QCOM/Unisoc) ابزار و مسیر دقیق ساخته می‌شود؛ برای iOS همین‌جا صریح گفته می‌شود
+    /// که بیس‌باند امضاشده اجازه نمی‌دهد. هیچ نوشتنی روی گوشی بدون ابزار رسمی سازنده انجام نمی‌شود.
+    /// </summary>
+    private TabPage BuildPhoneIdentity()
+    {
+        var page = NewPage("هویت روی گوشی");
+        var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 7, Padding = new Padding(16) };
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 62));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 122));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 66));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 8));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 8));
+        page.Controls.Add(body);
+
+        body.Controls.Add(new Label
+        {
+            Text = "IMEI در حافظه NV بیس‌باند گوشی است. این تب می‌گوید گوشی‌ات با کدام ابزار رسمی (MTK META / QPST / SPD) " +
+                   "قابل نوشتن است، ترتیب دقیق کار را می‌دهد و روی iOS صریح می‌گوید چرا ممکن نیست.",
+            ForeColor = Color.FromArgb(160, 72, 45),
+            BackColor = Color.FromArgb(255, 244, 232),
+            Padding = new Padding(12, 8, 12, 8),
+            Dock = DockStyle.Fill,
+            RightToLeft = RightToLeft.Yes
+        }, 0, 0);
+
+        var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 4, RightToLeft = RightToLeft.Yes };
+        for (var c = 0; c < 4; c++) grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25));
+        for (var r = 0; r < 4; r++) grid.RowStyles.Add(new RowStyle(SizeType.Percent, 25));
+
+        grid.Controls.Add(MakeFieldLabel("مسیر ADB"), 0, 0);
+        grid.Controls.Add(MakeFieldLabel("IMEI فعلی گوشی"), 1, 0);
+        grid.Controls.Add(MakeFieldLabel("IMEI2 (دوسیم)"), 2, 0);
+        grid.Controls.Add(MakeFieldLabel("EID (eSIM)"), 3, 0);
+
+        ConfigureFieldBox(_phoneAdbPath, "adb");
+        ConfigureFieldBox(_phoneImei, "از *#06#");
+        ConfigureFieldBox(_phoneImei2, "اختیاری");
+        ConfigureFieldBox(_phoneEid, "اختیاری");
+        grid.Controls.Add(_phoneAdbPath, 0, 1);
+        grid.Controls.Add(_phoneImei, 1, 1);
+        grid.Controls.Add(_phoneImei2, 2, 1);
+        grid.Controls.Add(_phoneEid, 3, 1);
+
+        grid.Controls.Add(MakeFieldLabel("چیپست (اگر ADB نبود، دستی انتخاب کن)"), 0, 2);
+        _phoneVendor.Dock = DockStyle.Fill;
+        _phoneVendor.DropDownStyle = ComboBoxStyle.DropDownList;
+        _phoneVendor.Margin = new Padding(6, 2, 6, 6);
+        _phoneVendor.Items.AddRange(["تشخیص خودکار", "MediaTek", "Qualcomm", "Unisoc/SPD", "HiSilicon", "Apple (iPhone)"]);
+        _phoneVendor.SelectedIndex = 0;
+        grid.Controls.Add(_phoneVendor, 0, 3);
+        grid.SetColumnSpan(_phoneVendor, 2);
+
+        var hint = new Label
+        {
+            Text = "ADB فقط برای خواندن مدل و چیپست استفاده می‌شود؛ هیچ فرمان نوشتنی روی گوشی اجرا نمی‌شود.",
+            ForeColor = Muted,
+            Dock = DockStyle.Fill,
+            RightToLeft = RightToLeft.Yes
+        };
+        grid.Controls.Add(hint, 2, 3);
+        grid.SetColumnSpan(hint, 2);
+        body.Controls.Add(grid, 0, 1);
+
+        var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+        _phoneDetect.Text = "تشخیص گوشی با ADB";
+        StyleAction(_phoneDetect, Accent, 170);
+        _phoneDetect.Click += async (_, _) => await DetectPhoneAsync();
+
+        _phonePlan.Text = "ساخت نقشه نوشتن روی گوشی";
+        StyleAction(_phonePlan, Navy, 205);
+        _phonePlan.Click += (_, _) => RefreshPhonePlan();
+
+        _phoneOpenTool.Text = "باز کردن پوشه ابزار";
+        StyleAction(_phoneOpenTool, Color.FromArgb(70, 92, 125), 160);
+        _phoneOpenTool.Click += (_, _) => OpenToolFolder();
+
+        _activationCompare.Text = "مقایسه هزینه مسیرها";
+        StyleAction(_activationCompare, Color.FromArgb(180, 62, 62), 185);
+        _activationCompare.Click += (_, _) => ShowActivationComparison();
+
+        actions.Controls.AddRange([_phoneDetect, _phonePlan, _phoneOpenTool, _activationCompare]);
+        body.Controls.Add(actions, 0, 2);
+
+        _phoneOutput.Dock = DockStyle.Fill;
+        _phoneOutput.Multiline = true;
+        _phoneOutput.ReadOnly = true;
+        _phoneOutput.ScrollBars = ScrollBars.Vertical;
+        _phoneOutput.BackColor = Surface;
+        _phoneOutput.BorderStyle = BorderStyle.FixedSingle;
+        _phoneOutput.RightToLeft = RightToLeft.Yes;
+        _phoneOutput.Font = AppFonts.Ui(9.5f);
+        body.Controls.Add(_phoneOutput, 0, 3);
+
+        _phoneVerdict.Dock = DockStyle.Fill;
+        _phoneVerdict.AutoSize = false;
+        _phoneVerdict.ForeColor = Navy;
+        _phoneVerdict.BackColor = Color.FromArgb(240, 245, 252);
+        _phoneVerdict.Padding = new Padding(10, 6, 10, 6);
+        _phoneVerdict.RightToLeft = RightToLeft.Yes;
+        _phoneVerdict.Text = "برای شروع: کابل را وصل کن و «تشخیص گوشی با ADB» را بزن، یا چیپست را دستی انتخاب کن و «ساخت نقشه» را بزن.";
+        body.Controls.Add(_phoneVerdict, 0, 4);
+
+        return page;
+    }
+
+    private async Task DetectPhoneAsync()
+    {
+        try
+        {
+            SetBusy(true);
+            _phoneVerdict.ForeColor = Navy;
+            _phoneVerdict.Text = "در حال خواندن مشخصات گوشی با ADB…";
+            var adb = _phoneAdbPath.Text.Trim();
+            if (adb.Length == 0) adb = "adb";
+
+            var result = await Task.Run(() => PhoneDetector.Detect(adb));
+            if (result.Identity is null)
+            {
+                _phoneVerdict.ForeColor = Color.FromArgb(180, 62, 62);
+                _phoneVerdict.Text = result.Error + " — می‌توانی چیپست را دستی انتخاب کنی.";
+                AppendWriteLog("تشخیص گوشی: " + result.Error);
+                foreach (var line in result.Trail) AppendWriteLog("  " + line);
+                return;
+            }
+
+            _phoneIdentity = result.Identity;
+            _phoneAccess = DeviceAccessKind.UserUsb;
+            if (_phoneImei.Text.Trim().Length == 0 && result.Identity.Imei.Length == 15)
+                _phoneImei.Text = result.Identity.Imei;
+
+            var vendorIndex = result.Identity.Vendor switch
+            {
+                PhoneVendor.MediaTek => 1,
+                PhoneVendor.Qualcomm => 2,
+                PhoneVendor.Unisoc => 3,
+                PhoneVendor.HiSilicon => 4,
+                PhoneVendor.Apple => 5,
+                _ => 0
+            };
+            if (vendorIndex > 0) _phoneVendor.SelectedIndex = vendorIndex;
+
+            _phoneVerdict.ForeColor = Color.FromArgb(0, 130, 110);
+            _phoneVerdict.Text = $"شناسایی شد: {result.Identity.Model} — چیپست {result.Identity.Vendor}. " +
+                                 $"بوت‌لودر: {(result.Identity.BootloaderUnlocked ? "باز" : "قفل")} — روت: {(result.Identity.Rooted ? "بله" : "خیر")}";
+            AppendWriteLog("تشخیص گوشی: " + _phoneVerdict.Text);
+            foreach (var line in result.Trail) AppendWriteLog("  " + line);
+            RefreshPhonePlan();
+        }
+        finally { SetBusy(false); }
+    }
+
+    private PhoneIdentity CurrentPhoneIdentity()
+    {
+        if (_phoneIdentity is not null) return _phoneIdentity;
+        var vendor = _phoneVendor.SelectedIndex switch
+        {
+            1 => PhoneVendor.MediaTek,
+            2 => PhoneVendor.Qualcomm,
+            3 => PhoneVendor.Unisoc,
+            4 => PhoneVendor.HiSilicon,
+            5 => PhoneVendor.Apple,
+            _ => PhoneVendor.Unknown
+        };
+        return new PhoneIdentity(
+            vendor,
+            string.Empty,
+            string.Empty,
+            PhoneDetector.NormalizeDigits(_phoneImei.Text),
+            PhoneDetector.NormalizeDigits(_phoneImei2.Text),
+            PhoneDetector.NormalizeDigits(_phoneEid.Text),
+            string.Empty,
+            string.Empty,
+            false,
+            false,
+            true);
+    }
+
+    private void RefreshPhonePlan()
+    {
+        var identity = CurrentPhoneIdentity();
+        var plan = PhoneAccessPlan.Build(identity, _phoneAccess,
+            ["منبع: " + (_phoneIdentity is null ? "ورود دستی چیپست" : "ADB")]);
+
+        _phoneOutput.Text = plan.ToText();
+        _phoneOutput.SelectionStart = 0;
+        _phoneVerdict.ForeColor = plan.WritableOnDevice ? Color.FromArgb(0, 130, 110) : Color.FromArgb(180, 62, 62);
+        _phoneVerdict.Text = plan.WritableOnDevice
+            ? $"مسیر نوشتن روی همین گوشی موجود است: {identity.Vendor}. ترتیب کار و پیش‌نیازها در کادر بالا آمده."
+            : "برای این دستگاه مسیر نوشتن با ابزار عمومی وجود ندارد؛ دلیلش در کادر بالا آمده.";
+    }
+
+    private void OpenToolFolder()
+    {
+        var vendor = CurrentPhoneIdentity().Vendor;
+        var (folder, hint) = vendor switch
+        {
+            PhoneVendor.MediaTek => ("MTK", "SP Flash Tool / Maui Meta را در همین پوشه بگذار و اجرا کن."),
+            PhoneVendor.Qualcomm => ("QCOM", "QPST / QXDM را در همین پوشه بگذار و اجرا کن."),
+            PhoneVendor.Unisoc => ("SPD", "ResearchDownload و فایل PAC را در همین پوشه بگذار."),
+            PhoneVendor.Apple => ("iOS", "روی آیفون ابزار نوشتن IMEI وجود ندارد؛ این پوشه فقط برای مستندسازی است."),
+            _ => ("", "اول چیپست را مشخص کن.")
+        };
+        var basePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "XAnten", "tools", folder.Length > 0 ? folder : "unknown");
+        try
+        {
+            Directory.CreateDirectory(basePath);
+            Process.Start(new ProcessStartInfo { FileName = basePath, UseShellExecute = true });
+            _phoneVerdict.ForeColor = Navy;
+            _phoneVerdict.Text = hint + " مسیر: " + basePath;
+        }
+        catch (Exception ex)
+        {
+            _phoneVerdict.ForeColor = Color.FromArgb(180, 62, 62);
+            _phoneVerdict.Text = "باز کردن پوشه ممکن نشد: " + ex.Message;
+        }
+    }
+
+    private void ShowActivationComparison()
+    {
+        var target = _loanerTarget.Text.Trim();
+        if (target.Length == 0) target = CurrentPhoneIdentity().Model.Length > 0 ? CurrentPhoneIdentity().Model : "دستگاه غیرمجاز";
+        _phoneOutput.Text = ActivationPaths.BuildReport(target);
+        _phoneOutput.SelectionStart = 0;
+        _phoneVerdict.ForeColor = Navy;
+        _phoneVerdict.Text = "برای «خودِ این گوشی» فقط ثبت در همتا یا نوشتن NV روی اندروید جواب می‌دهد؛ ارزان‌ترین راهِ امروز، گوشی لنگر ثبت‌شده است.";
     }
 
     private TabPage BuildSimProfiles()
