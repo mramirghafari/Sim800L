@@ -220,6 +220,26 @@ internal static class MobileSelfTests
             null, default).GetAwaiter().GetResult();
         check("آیفون بدون Trust با پیام روشن رد می‌شود", !noTrust.FoundAny && noTrust.Verdict.Contains("Trust"));
 
+        // --- انتقال برد از گوشی قدیمی به جدید ---
+        var swapHealthy = BoardSwapAssessment.Build("SM-S918B", "SM-S928B", "352921101646918", "", "89984320209053350178", false, true);
+        check("برد سالم: حکم «ثبت IMEI موجود» است نه نوشتن",
+            swapHealthy.Verdict == BoardSwapVerdict.RegisterExistingImei && !swapHealthy.ImpliesImeiRewrite);
+        check("گام‌های برد سالم شامل تطبیق *#06# و استعلام همتا است",
+            swapHealthy.Steps.Any(s => s.Why.Contains("*#06#")) && swapHealthy.HtaNote.Contains("همتا"));
+        check("برد سالم هیچ گام نوشتن ندارد", swapHealthy.Steps.All(step => !step.RequiresWriting));
+
+        var swapEmptyNoBackup = BoardSwapAssessment.Build("iPhone14,2", "iPhone17,1", "", "", "", false, true);
+        check("برد خالی بدون پشتیبان: غیرقابل احیا اعلام می‌شود",
+            swapEmptyNoBackup.Verdict == BoardSwapVerdict.NotRecoverable);
+        var swapEmptyWithBackup = BoardSwapAssessment.Build("iPhone14,2", "iPhone17,1", "", "", "", true, true);
+        check("برد خالی با پشتیبان: مسیر Restore با گام نوشتن پارتیشن",
+            swapEmptyWithBackup.Verdict == BoardSwapVerdict.RestoreFromBackup && swapEmptyWithBackup.ImpliesImeiRewrite);
+        check("بدون IMEI خوانده‌شده، حکم «اول بخوان» است",
+            BoardSwapAssessment.Build("", "", "", "", "", false, true).Verdict == BoardSwapVerdict.NeedReading);
+        check("برند متفاوت هشدار مدل/برند می‌دهد",
+            BoardSwapAssessment.Build("SM-S918B", "Pixel", "352921101646918", "", "", false, false)
+                .Steps.Any(s => s.Title.Contains("برند")));
+
         // --- آیفون بدون IMEI: تفکیک مودم غایب / هویت خالی / فعال‌نشده ---
         AppleIdentityResult Apple(string baseband, string imei, string activation) => new(
             "00008110-001A2B3C44556677", "iPhone17,1", "18.0", imei, "", "", "", "F4GW", baseband, activation,
