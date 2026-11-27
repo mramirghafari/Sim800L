@@ -34,6 +34,8 @@ internal static class SelfTests
             Check("وزن بدنه سبک و تیتر بولد است", !bodyFont.Bold && headingFont.Bold);
         }
 
+        failures += MobileSelfTests.Run(log);
+
         // --- اعتبارسنجی IMEI -------------------------------------------------
         Check("IMEI معتبر شناخته می‌شود",
             ImeiNumber.TryParse("490154203237518", out var imei1, out _) && imei1!.Tac == "49015420");
@@ -172,15 +174,15 @@ internal static class SelfTests
 
         Check("وضعیت 9000 موفق خوانده می‌شود", new SimApduResult("x", 0x90, 0x00, "").IsSuccess);
         Check("وضعیت 6982 به «نیاز به ADM» تفسیر می‌شود",
-            SimFileAccess.ClassifyWrite(new SimApduResult("x", 0x69, 0x82, "")) == SimFileAccess.AdminRequired);
+            SimFileAccess.ClassifyWrite(new SimApduResult("x", 0x69, 0x82, "")) == SimWriteAccess.AdminRequired);
         Check("وضعیت 9804 به «نیاز به ADM» تفسیر می‌شود",
-            SimFileAccess.ClassifyWrite(new SimApduResult("x", 0x98, 0x04, "")) == SimFileAccess.AdminRequired);
+            SimFileAccess.ClassifyWrite(new SimApduResult("x", 0x98, 0x04, "")) == SimWriteAccess.AdminRequired);
         Check("وضعیت 9404 به «فایل نیست» تفسیر می‌شود",
-            SimFileAccess.ClassifyWrite(new SimApduResult("x", 0x94, 0x04, "")) == SimFileAccess.NotFound);
+            SimFileAccess.ClassifyWrite(new SimApduResult("x", 0x94, 0x04, "")) == SimWriteAccess.NotFound);
         Check("وضعیت موفق به «مجاز» تفسیر می‌شود",
-            SimFileAccess.ClassifyWrite(new SimApduResult("x", 0x90, 0x00, "")) == SimFileAccess.UpdateOk);
+            SimFileAccess.ClassifyWrite(new SimApduResult("x", 0x90, 0x00, "")) == SimWriteAccess.UpdateOk);
         Check("توضیح «نیاز به ADM» صریح و بدون ادعای موفقیت است",
-            SimFileAccess.Explain(SimFileAccess.AdminRequired).Contains("ADM"));
+            SimFileAccess.Explain(SimWriteAccess.AdminRequired).Contains("ADM"));
 
         // --- خانواده ماژول و دفتر IMEI ---------------------------------------
         Check("مدل SIM808 از ATI تشخیص داده می‌شود", ModuleFamily.Detect("SIM808 R14.18") == ModuleFamily.Sim808);

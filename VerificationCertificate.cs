@@ -62,6 +62,10 @@ internal sealed record VerificationCertificate(
     /// <summary>نسخه کوتاه برای کپی سریع در سامانه/پیام.</summary>
     public string RenderCompact() =>
         $"IMEI: {ImeiFinal} | مدل: {ModuleModel} | خانواده: {Family} | " +
-        $"firmware: {FirmwareRevision} | پایداری: {(Persisted ? $"{PersistenceCycles} چرخه ✅" : "ناموفق ❌")} | " +
+        $"firmware: {FirmwareRevision} | پایداری: {(Persisted ? $"{ToPersianDigits(PersistenceCycles)} چرخه ✅" : "ناموفق ❌")} | " +
         $"تاریخ: {GeneratedUtc.ToLocalTime():yyyy-MM-dd HH:mm}";
+
+    private static string ToPersianDigits(int value) => string.Concat(
+        value.ToString(CultureInfo.InvariantCulture)
+            .Select(character => character is >= '0' and <= '9' ? (char)('۰' + character - '0') : character));
 }
