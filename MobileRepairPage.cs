@@ -34,6 +34,9 @@ internal sealed class MobileRepairPage : TabPage
     private readonly Button _universalRead = MakeButton("خواندن IMEI از هر مسیری");
     private readonly Button _modemWrite = MakeButton("نوشتن IMEI روی گوشی");
     private readonly Button _modemPorts = MakeButton("پورت‌های مودم");
+    private readonly Button _identityReport = MakeButton("برگه یکپارچگی هویت");
+    private readonly Button _backupIdentity = MakeButton("پشتیبان هویت (EFS/NVRAM)");
+    private readonly Button _hamtaGuide = MakeButton("دستیار ثبت در همتا");
     private readonly TextBox _writeTargetPlain = new()
     {
         Width = 165, RightToLeft = RightToLeft.No, MaxLength = 15, TextAlign = HorizontalAlignment.Center,
@@ -49,6 +52,7 @@ internal sealed class MobileRepairPage : TabPage
     private string? _comparison;
     private UniversalIdentity? _universal;
     private PhoneWriteResult? _writeResult;
+    private DeviceIdentityCertificate? _identityCertificate;
     private bool _checkingUsb;
 
     public MobileRepairPage() : base("تعمیرات گوشی")
@@ -65,7 +69,8 @@ internal sealed class MobileRepairPage : TabPage
         var caption = new Label { Text = "عیب‌یابی USB گوشی", AutoSize = true, Font = AppFonts.Ui(14, FontStyle.Bold),
             ForeColor = Color.FromArgb(21, 32, 51) };
         layout.Controls.Add(caption, 0, 0);
-        layout.Controls.Add(Buttons(_scan, _tools, _read, _universalRead, _modemPorts, _modemWrite, _cancel, _export, _saveSnapshot, _verifySnapshot), 0, 1);
+        layout.Controls.Add(Buttons(_scan, _tools, _read, _universalRead, _modemPorts, _modemWrite, _identityReport, _backupIdentity, _hamtaGuide,
+                _cancel, _export, _saveSnapshot, _verifySnapshot), 0, 1);
         _devices.AccessibleName = "گوشی متصل";
         layout.Controls.Add(_devices, 0, 2);
         layout.Controls.Add(_status, 0, 3);
@@ -96,6 +101,9 @@ internal sealed class MobileRepairPage : TabPage
         _universalRead.Click += async (_, _) => await UniversalReadAsync();
         _modemPorts.Click += async (_, _) => await ModemScanAsync();
         _modemWrite.Click += async (_, _) => await ModemWriteAsync();
+        _identityReport.Click += async (_, _) => await BuildIdentityReportAsync();
+        _backupIdentity.Click += async (_, _) => await BackupIdentityAsync();
+        _hamtaGuide.Click += (_, _) => ShowHamtaGuide();
         _monitor.Tick += async (_, _) => await CheckUsbAsync();
         VisibleChanged += (_, _) => _monitor.Enabled = Visible;
         ShowReport();
@@ -407,6 +415,92 @@ internal sealed class MobileRepairPage : TabPage
         return probe.FindToolPath(name);
     }
 
+    /// <summary>
+    /// برگه یکپارچگی هویت: IMEI خوانده‌شده را با Luhn و TAC می‌سنجد و یک سند قابل ارائه به مرکز
+    /// خدمات یا همتا می‌سازد. این سند برای پیگیری «بازگردانی IMEI کارخانه» یا ثبت دستگاه است؛
+    /// خودِ برنامه هیچ شناسه‌ای را تغییر نمی‌دهد.
+    /// </summary>
+    private async Task BuildIdentityReportAsync()
+    {
+        var identity = _universal;
+        if (identity is null)
+        {
+            _status.Text = "اول «خواندن IMEI از هر مسیری» را بزن.";
+            return;
+        }
+
+        var certificate = DeviceIdentityCertificate.Build(identity, _readAt ?? DateTimeOffset.UtcNow);
+        using var dialog = new SaveFileDialog
+        {
+            Filter = "متن (*.txt)|*.txt", FileName = $"XAnten-identity-{DateTime.Now:yyyyMMdd-HHmm}.txt"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        try
+        {
+            await File.WriteAllTextAsync(dialog.FileName, certificate.ToText(), CancellationToken.None);
+            _report.Text = certificate.ToText();
+            _status.Text = certificate.Verdict;
+            _identityCertificate = certificate;
+            UpdateButtons();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _status.Text = "ذخیره برگه انجام نشد: " + ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// پشتیبان هویت از پارتیشن‌های EFS/NVRAM. این کار استاندارد تعمیرگاهی است و جلوی
+    /// «گوشی بی‌سیم بعد از فلش» را می‌گیرد. فقط با روت یا حالت سرویس انجام می‌شود.
+    /// </summary>
+    private Task BackupIdentityAsync() => RunAsync("در حال پشتیبان‌گیری هویت…", async token =>
+    {
+        if ((_devices.SelectedItem as MobileTarget) is not { Protocol: MobileDiagnostics.Android } target)
+        {
+            _report.Text = "برای پشتیبان پارتیشن، گوشی اندروید را از فهرست انتخاب کن (مسیر ADB).";
+            return;
+        }
+
+        var adb = FindToolPath("adb.exe");
+        if (adb is null)
+        {
+            _report.Text = "adb.exe پیدا نشد. در «پوشه ابزارها» مسیر platform-tools را بده.";
+            return;
+        }
+
+        var plan = IdentityBackupPlanner.BuildForAndroid(target.Model, target.Id);
+        _report.Text = plan.ToText();
+        var root = await MobileDiagnostics.RunToolAsync(adb, ["-s", target.Id, "shell", "su", "-c", "id"], token);
+        if (!root.Output.Contains("uid=0", StringComparison.Ordinal))
+        {
+            _status.Text = "روت نیست؛ فرمان‌های پشتیبان فقط نمایش داده شد و اجرا نشد.";
+            return;
+        }
+
+        using var picker = new FolderBrowserDialog { Description = "پوشه ذخیره پشتیبان هویت" };
+        if (picker.ShowDialog(this) != DialogResult.OK) return;
+
+        var log = new List<string> { plan.ToText(), "", "اجرا:" };
+        foreach (var command in plan.Commands)
+        {
+            token.ThrowIfCancellationRequested();
+            var result = await MobileDiagnostics.RunToolAsync(adb,
+                ["-s", target.Id, "shell", "su", "-c", command.Replace("{OUT}", picker.SelectedPath, StringComparison.Ordinal)], token);
+            log.Add($"[{(result.ExitCode == 0 ? "OK" : "خطا")}] {command}");
+        }
+        _report.Text = string.Join(Environment.NewLine, log);
+        _status.Text = "پشتیبان‌گیری تمام شد؛ فایل‌های EFS/NVRAM را نگه دار.";
+    });
+
+    private void ShowHamtaGuide()
+    {
+        var identity = _universal;
+        var guide = HamtaRegistrationGuide.Build(identity, _identityCertificate);
+        _report.Text = guide.ToText();
+        _status.Text = guide.Verdict;
+    }
+
     private void Export()
     {
         var report = CreateJsonReport(_usb ?? [], _devices.Items.Cast<MobileTarget>(),
@@ -444,6 +538,9 @@ internal sealed class MobileRepairPage : TabPage
         _export.Enabled = ready && _usb is not null;
         _universalRead.Enabled = _modemPorts.Enabled = _modemWrite.Enabled = ready;
         _writeTargetPlain.Enabled = ready;
+        _identityReport.Enabled = ready && _universal is not null;
+        _backupIdentity.Enabled = ready;
+        _hamtaGuide.Enabled = ready;
         _saveSnapshot.Enabled = ready && _reading?.Fields.Count > 0 && _devices.SelectedItem is MobileTarget { UsbNode: null };
         _verifySnapshot.Enabled = ready;
         var manual = CanEnterImei(_reading);
