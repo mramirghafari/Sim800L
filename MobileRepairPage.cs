@@ -39,6 +39,10 @@ internal sealed class MobileRepairPage : TabPage
     private readonly Button _hamtaGuide = MakeButton("دستیار ثبت در همتا");
     private readonly Button _recoveryPlan = MakeButton("تشخیص IMEI خالی (برد تعویض‌شده)");
     private readonly Button _appleDiagnosis = MakeButton("تشخیص آیفون بدون IMEI");
+    private readonly Button _boardSwap = MakeButton("انتقال برد قدیمی به گوشی جدید");
+    private readonly TextBox _oldDevice = new() { Width = 130, RightToLeft = RightToLeft.Yes, PlaceholderText = "گوشی قدیمی" };
+    private readonly TextBox _newDevice = new() { Width = 130, RightToLeft = RightToLeft.Yes, PlaceholderText = "گوشی جدید" };
+    private readonly CheckBox _hasBoardBackup = new() { Text = "پشتیبان EFS/NVRAM برد دارم", AutoSize = true };
     private readonly TextBox _writeTargetPlain = new()
     {
         Width = 165, RightToLeft = RightToLeft.No, MaxLength = 15, TextAlign = HorizontalAlignment.Center,
@@ -57,6 +61,7 @@ internal sealed class MobileRepairPage : TabPage
     private DeviceIdentityCertificate? _identityCertificate;
     private IdentityRecoveryPlan? _recovery;
     private AppleBasebandDiagnosis? _appleState;
+    private BoardSwapAssessment? _boardAssessment;
     private bool _checkingUsb;
 
     public MobileRepairPage() : base("تعمیرات گوشی")
@@ -73,13 +78,13 @@ internal sealed class MobileRepairPage : TabPage
         var caption = new Label { Text = "عیب‌یابی USB گوشی", AutoSize = true, Font = AppFonts.Ui(14, FontStyle.Bold),
             ForeColor = Color.FromArgb(21, 32, 51) };
         layout.Controls.Add(caption, 0, 0);
-        layout.Controls.Add(Buttons(_scan, _tools, _read, _universalRead, _modemPorts, _modemWrite, _identityReport, _recoveryPlan, _appleDiagnosis, _backupIdentity,
+        layout.Controls.Add(Buttons(_scan, _tools, _read, _universalRead, _modemPorts, _modemWrite, _identityReport, _recoveryPlan, _appleDiagnosis, _boardSwap, _backupIdentity,
                 _hamtaGuide, _cancel, _export, _saveSnapshot, _verifySnapshot), 0, 1);
         _devices.AccessibleName = "گوشی متصل";
         layout.Controls.Add(_devices, 0, 2);
         layout.Controls.Add(_status, 0, 3);
         layout.Controls.Add(_report, 0, 4);
-        layout.Controls.Add(Buttons(_writeTargetPlain, _expected, _observed, _compare,
+        layout.Controls.Add(Buttons(_oldDevice, _newDevice, _hasBoardBackup, _writeTargetPlain, _expected, _observed, _compare,
             SupportLink("بازیابی رسمی Samsung", "https://update.kies.samsung.com/SmartSwitchPC_recovery_guide/firmware/emergencyrecovery/"),
             SupportLink("بازیابی رسمی Apple", "https://support.apple.com/en-us/118106")), 0, 5);
 
@@ -110,6 +115,7 @@ internal sealed class MobileRepairPage : TabPage
         _hamtaGuide.Click += (_, _) => ShowHamtaGuide();
         _recoveryPlan.Click += (_, _) => ShowRecoveryPlan();
         _appleDiagnosis.Click += async (_, _) => await ShowAppleDiagnosisAsync();
+        _boardSwap.Click += (_, _) => ShowBoardSwap();
         _monitor.Tick += async (_, _) => await CheckUsbAsync();
         VisibleChanged += (_, _) => _monitor.Enabled = Visible;
         ShowReport();
@@ -529,6 +535,25 @@ internal sealed class MobileRepairPage : TabPage
         UpdateButtons();
     }
 
+    /// <summary>
+    /// انتقال برد گوشی قدیمی به قاب گوشی جدید: در حالت سالم، IMEI برد خودش همراه سخت‌افزار می‌آید
+    /// و کاری برای نوشتن لازم نیست. این تحلیل همان حقیقت را با گام‌های قابل اجرا نشان می‌دهد.
+    /// </summary>
+    private void ShowBoardSwap()
+    {
+        var imei = _universal?.Imei1 ?? _writeResult?.ImeiAfter ?? string.Empty;
+        var imei2 = _universal?.Imei2 ?? string.Empty;
+        var assessment = BoardSwapAssessment.Build(
+            _oldDevice.Text.Trim(), _newDevice.Text.Trim(), imei, imei2,
+            _universal?.Iccid ?? string.Empty, _hasBoardBackup.Checked,
+            sameVendor: true);
+
+        _boardAssessment = assessment;
+        _report.Text = assessment.ToText();
+        _status.Text = assessment.Summary;
+        UpdateButtons();
+    }
+
     private void ShowRecoveryPlan()
     {
         var imei = _universal?.Imei1 ?? ReadImeiFromWriteResult() ?? string.Empty;
@@ -596,6 +621,7 @@ internal sealed class MobileRepairPage : TabPage
         _hamtaGuide.Enabled = ready;
         _recoveryPlan.Enabled = ready;
         _appleDiagnosis.Enabled = ready;
+        _boardSwap.Enabled = ready;
         _saveSnapshot.Enabled = ready && _reading?.Fields.Count > 0 && _devices.SelectedItem is MobileTarget { UsbNode: null };
         _verifySnapshot.Enabled = ready;
         var manual = CanEnterImei(_reading);
