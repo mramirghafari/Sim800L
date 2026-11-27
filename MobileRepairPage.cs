@@ -31,6 +31,14 @@ internal sealed class MobileRepairPage : TabPage
     private readonly Button _compare = MakeButton("مقایسه IMEI اصلی");
     private readonly Button _saveSnapshot = MakeButton("ذخیره اسنپ‌شات رمزدار");
     private readonly Button _verifySnapshot = MakeButton("بررسی اسنپ‌شات");
+    private readonly Button _universalRead = MakeButton("خواندن IMEI از هر مسیری");
+    private readonly Button _modemWrite = MakeButton("نوشتن IMEI روی گوشی");
+    private readonly Button _modemPorts = MakeButton("پورت‌های مودم");
+    private readonly TextBox _writeTargetPlain = new()
+    {
+        Width = 165, RightToLeft = RightToLeft.No, MaxLength = 15, TextAlign = HorizontalAlignment.Center,
+        PlaceholderText = "IMEI هدف برای نوشتن", AccessibleName = "IMEI هدف برای نوشتن"
+    };
     private readonly System.Windows.Forms.Timer _monitor = new() { Interval = 3500 };
     private IReadOnlyList<MobileUsbNode>? _usb;
     private MobileReading? _reading;
@@ -39,6 +47,8 @@ internal sealed class MobileRepairPage : TabPage
     private string _folder = "";
     private string _discoveryStatus = "برای بررسی اتصال، اسکن USB را بزنید.";
     private string? _comparison;
+    private UniversalIdentity? _universal;
+    private PhoneWriteResult? _writeResult;
     private bool _checkingUsb;
 
     public MobileRepairPage() : base("تعمیرات گوشی")
@@ -55,12 +65,12 @@ internal sealed class MobileRepairPage : TabPage
         var caption = new Label { Text = "عیب‌یابی USB گوشی", AutoSize = true, Font = AppFonts.Ui(14, FontStyle.Bold),
             ForeColor = Color.FromArgb(21, 32, 51) };
         layout.Controls.Add(caption, 0, 0);
-        layout.Controls.Add(Buttons(_scan, _tools, _read, _cancel, _export, _saveSnapshot, _verifySnapshot), 0, 1);
+        layout.Controls.Add(Buttons(_scan, _tools, _read, _universalRead, _modemPorts, _modemWrite, _cancel, _export, _saveSnapshot, _verifySnapshot), 0, 1);
         _devices.AccessibleName = "گوشی متصل";
         layout.Controls.Add(_devices, 0, 2);
         layout.Controls.Add(_status, 0, 3);
         layout.Controls.Add(_report, 0, 4);
-        layout.Controls.Add(Buttons(_expected, _observed, _compare,
+        layout.Controls.Add(Buttons(_writeTargetPlain, _expected, _observed, _compare,
             SupportLink("بازیابی رسمی Samsung", "https://update.kies.samsung.com/SmartSwitchPC_recovery_guide/firmware/emergencyrecovery/"),
             SupportLink("بازیابی رسمی Apple", "https://support.apple.com/en-us/118106")), 0, 5);
 
@@ -83,6 +93,9 @@ internal sealed class MobileRepairPage : TabPage
             ClearReading();
             ShowReport();
         };
+        _universalRead.Click += async (_, _) => await UniversalReadAsync();
+        _modemPorts.Click += async (_, _) => await ModemScanAsync();
+        _modemWrite.Click += async (_, _) => await ModemWriteAsync();
         _monitor.Tick += async (_, _) => await CheckUsbAsync();
         VisibleChanged += (_, _) => _monitor.Enabled = Visible;
         ShowReport();
@@ -305,6 +318,95 @@ internal sealed class MobileRepairPage : TabPage
         ? "مقایسه دستی — شماره واردشده از صفحه گوشی با شماره مرجع یکسان است."
         : "مقایسه دستی — شماره واردشده از صفحه گوشی با شماره مرجع اختلاف دارد.";
 
+    /// <summary>
+    /// خواندن IMEI از همه مسیرهای ممکن (مودم/AT، lockdownd آیفون، binder اندروید).
+    /// این همان «فاز اول» است: بدون توجه به برند و نسخه، هر مسیری که جواب بدهد گزارش می‌شود.
+    /// </summary>
+    private Task UniversalReadAsync() => RunAsync("در حال خواندن IMEI از همه مسیرها…", async token =>
+    {
+        var ports = ModemIdentityProbe.Ports();
+        var adb = FindToolPath("adb.exe");
+        var idevice = FindToolPath("ideviceinfo.exe");
+        var adbSerial = (_devices.SelectedItem as MobileTarget) is { Protocol: MobileDiagnostics.Android } selected
+            ? selected.Id
+            : null;
+
+        var identity = await UniversalIdentityReader.ReadAsync(ports, adb, adbSerial, idevice,
+            MobileDiagnostics.RunToolAsync, token);
+        _universal = identity;
+        _report.Text = identity.ToText();
+        _status.Text = identity.Verdict;
+        if (identity.Found && _writeTargetPlain.Text.Trim().Length == 0)
+            _writeTargetPlain.Text = identity.Imei1;
+        UpdateButtons();
+    });
+
+    /// <summary>فقط پورت‌های سریال و اینکه کدامشان مودم است — برای وقتی پورت DM تازه ظاهر شده.</summary>
+    private Task ModemScanAsync() => RunAsync("در حال بررسی پورت‌های سریال…", async token =>
+    {
+        var ports = ModemIdentityProbe.Ports();
+        var lines = new List<string> { "پورت‌های سریال ویندوز:" };
+        if (ports.Count == 0) lines.Add("هیچ پورت سریالی نیست. روی سامسونگ *#0808# → DM+MODEM+ADB را انتخاب کن.");
+        foreach (var port in ports)
+        {
+            token.ThrowIfCancellationRequested();
+            var result = await ModemIdentityProbe.ScanAsync([port], token);
+            lines.Add($"{port} — {(result.FoundAny ? $"مودم پاسخ داد، IMEI: {result.Imei1}" : result.Verdict)}");
+        }
+        lines.Add("");
+        lines.Add("اگر پورت مودم پیدا نشد: کابل دیتا را عوض کن، در Device Manager ببین پورت با کد خطا ۲۸ نباشد، و بعد از انتخاب DM+MODEM+ADB گوشی را ری‌استارت نکن.");
+        _report.Text = string.Join(Environment.NewLine, lines);
+        _status.Text = ports.Count == 0 ? "پورت سریالی دیده نشد." : $"{ports.Count} پورت سریال بررسی شد.";
+    });
+
+    /// <summary>
+    /// فاز دوم: نوشتن IMEI روی گوشی از طریق پورت مودم (Qualcomm/Samsung DIAG).
+    /// فقط وقتی پورت مودم IMEI فعلی را داده باشد اجرا می‌شود؛ بعد از نوشتن، بازخوانی مستقل انجام می‌شود.
+    /// </summary>
+    private Task ModemWriteAsync() => RunAsync("در حال نوشتن IMEI روی گوشی…", async token =>
+    {
+        if (!TryParseEnteredImei(_writeTargetPlain.Text, out var target, out var error))
+        {
+            _report.Text = $"IMEI هدف — {error}";
+            _status.Text = error;
+            return;
+        }
+
+        var port = ModemIdentityProbe.Ports().FirstOrDefault();
+        if (port is null)
+        {
+            _report.Text = "هیچ پورت سریالی نیست. اول «پورت‌های مودم» را بزن و حالت DM+MODEM+ADB را روی گوشی انتخاب کن.";
+            return;
+        }
+
+        var current = await ModemIdentityProbe.ScanAsync([port], token);
+        if (!current.FoundAny)
+        {
+            _report.Text = current.ToText();
+            _status.Text = "پورت مودم IMEI فعلی را نداد؛ نوشتن انجام نشد.";
+            return;
+        }
+
+        var confirm = MessageBox.Show(this,
+            $"IMEI فعلی گوشی: {current.Imei1}\r\nIMEI هدف: {target!.Value}\r\n\r\n" +
+            "نوشتن روی NV مودم انجام می‌شود و بعد بازخوانی می‌شود. اگر گوشی روی NV قفل داشته باشد، " +
+            "مقدار تغییر نمی‌کند و همان گزارش می‌شود.\r\n\r\nادامه؟",
+            "نوشتن IMEI روی گوشی", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (confirm != DialogResult.Yes) return;
+
+        var result = await PhoneImeiWriter.WriteViaModemAsync(port, 115200, target.Value,
+            (name, baud, ct) => ModemIdentityProbe.ProbeAsync(name, baud, ct), token);
+        _writeResult = result;
+        _report.Text = result.ToText();
+        _status.Text = result.Success ? "نوشتن تأیید شد." : result.Outcome.ToString();
+    });
+
+    private string? FindToolPath(string name)
+    {
+        var probe = new MobileDiagnostics(_folder, MobileDiagnostics.RunToolAsync);
+        return probe.FindToolPath(name);
+    }
+
     private void Export()
     {
         var report = CreateJsonReport(_usb ?? [], _devices.Items.Cast<MobileTarget>(),
@@ -340,6 +442,8 @@ internal sealed class MobileRepairPage : TabPage
         _read.Enabled = ready && _devices.SelectedItem is MobileTarget;
         _cancel.Enabled = !ready;
         _export.Enabled = ready && _usb is not null;
+        _universalRead.Enabled = _modemPorts.Enabled = _modemWrite.Enabled = ready;
+        _writeTargetPlain.Enabled = ready;
         _saveSnapshot.Enabled = ready && _reading?.Fields.Count > 0 && _devices.SelectedItem is MobileTarget { UsbNode: null };
         _verifySnapshot.Enabled = ready;
         var manual = CanEnterImei(_reading);

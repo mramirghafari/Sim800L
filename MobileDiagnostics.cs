@@ -242,6 +242,9 @@ internal sealed class MobileDiagnostics(string toolsFolder, MobileToolRunner run
         _ => "اجرای ابزار ممکن نبود. فایل اجرایی و وابستگی‌های آن را بررسی کنید."
     };
 
+    /// <summary>مسیر ابزار برای استفاده سایر بخش‌ها (بدون اجرای آن).</summary>
+    public string? FindToolPath(string name) => FindTool(name);
+
     private string? FindTool(string name)
     {
         var directories = new List<string> { toolsFolder, Path.Combine(AppContext.BaseDirectory, "platform-tools"),

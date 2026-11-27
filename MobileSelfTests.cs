@@ -40,6 +40,8 @@ internal static class MobileSelfTests
             folder.Delete();
         }
 
+        CheckIdentityProbes(Check);
+
         var encrypted = MobileSnapshot.Protect("XAnten sample "u8);
         MobileSnapshot.VerifyEnvelope(encrypted);
         Check("اسنپ‌شات با DPAPI رمزگشایی شد و SHA-256 تطابق داشت", encrypted.AsSpan().IndexOf("XAnten sample "u8) < 0);
@@ -163,5 +165,91 @@ internal static class MobileSelfTests
             check("لغو به اجراکننده فرمان می‌رسد", false);
         }
         catch (OperationCanceledException) { check("لغو به اجراکننده فرمان می‌رسد", true); }
+    }
+
+    private static void CheckIdentityProbes(Action<string, bool> check)
+    {
+        // --- استخراج IMEI از پاسخ مودم ---
+        check("IMEI خالص از پاسخ AT+CGSN خوانده می‌شود",
+            ModemIdentityProbe.ExtractImei("\r\n352921101646918\r\nOK\r\n") == "352921101646918");
+        check("پاسخ +CGSN: IMEI هم پذیرفته می‌شود",
+            ModemIdentityProbe.ExtractImei("+CGSN: 490154203237518\r\nOK") == "490154203237518");
+        check("پاسخ خالی یا ERROR به IMEI تبدیل نمی‌شود",
+            ModemIdentityProbe.ExtractImei("ERROR") == "" &&
+            ModemIdentityProbe.ExtractImei("000000000000000") == "");
+
+        // --- سرویس binder اندروید ---
+        // دامپ واقعی: هر کلمه ۴ بایت، رشته UTF-16 big-endian (00 34 = '4').
+        const string parcel = "Result: Parcel(00000000 0000000f 00340039 00300031 00350034 00320030 " +
+                              "00330032 00330037 00350031 00380000 00000000)";
+        var decoded = AndroidIdentityProbe.DecodeHexDump(parcel);
+        check("سرویس binder عدد ۱۵ رقمی معتبر را برمی‌گرداند", decoded == "490154203237518");
+        check("پاسخ هگز نامعتبر یا Luhn غلط پذیرفته نمی‌شود",
+            AndroidIdentityProbe.DecodeHexDump("Result: Parcel(deadbeef)") == "" &&
+            AndroidIdentityProbe.DecodeHexDump("Result: Parcel(00310032 00330034 00350036 00370038 00390031 00310032 00330034)") == "");
+
+        // --- آیفون: خواندن کلید به کلید ---
+        var appleCalls = new List<string>();
+        var appleRunner = new Func<string, IReadOnlyList<string>, CancellationToken, Task<MobileToolResult>>((path, args, token) =>
+        {
+            appleCalls.Add(string.Join(' ', args));
+            var key = args[^1];
+            var value = key switch
+            {
+                "InternationalMobileEquipmentIdentity" => "352921101646918",
+                "InternationalMobileEquipmentIdentity2" => "352921101658061",
+                "EmbeddedIdentityDocument" => "89049032020008884800251820547965",
+                "ProductType" => "iPhone17,1",
+                "ProductVersion" => "18.0",
+                _ => ""
+            };
+            return Task.FromResult(new MobileToolResult(0, value + "\n", ""));
+        });
+        var apple = AppleIdentityProbe.ReadAsync("ideviceinfo.exe", appleRunner, "00008110-001A2B3C44556677", default)
+            .GetAwaiter().GetResult();
+        check("IMEI و IMEI2 و EID آیفون از lockdownd خوانده می‌شوند",
+            apple.Imei1 == "352921101646918" && apple.Imei2 == "352921101658061" &&
+            apple.Eid == "89049032020008884800251820547965");
+        check("برای هر کلید یک فرمان ideviceinfo جدا اجرا می‌شود",
+            appleCalls.Count == AppleIdentityProbe.IdentityKeys.Length && appleCalls.All(call => call.Contains("-k")));
+
+        var noTrust = AppleIdentityProbe.ReadAsync("ideviceinfo.exe",
+            (path, args, _) => Task.FromResult(args[0] == "-l"
+                ? new MobileToolResult(0, "00008110-001A2B3C44556677\n", "")
+                : new MobileToolResult(1, "", "Could not connect to lockdownd: Pairing dialog response pending")),
+            null, default).GetAwaiter().GetResult();
+        check("آیفون بدون Trust با پیام روشن رد می‌شود", !noTrust.FoundAny && noTrust.Verdict.Contains("Trust"));
+
+        // --- نوشتن روی گوشی: اعتبارسنجی و مسیرهای بسته ---
+        check("IMEI هدف نامعتبر رد می‌شود",
+            PhoneImeiWriter.ValidateTarget("352921101646919", "352921101646918").Contains("معتبر نیست"));
+        check("IMEI برابر مقدار فعلی، نوشتن لازم ندارد",
+            PhoneImeiWriter.ValidateTarget("352921101646918", "352921101646918").Contains("یکسان"));
+        check("هدف معتبر بدون پیام خطا عبور می‌کند",
+            PhoneImeiWriter.ValidateTarget("352921101646918", "867372053415555") == "");
+        check("فرمان‌های Qualcomm شامل NV 550 و بازگردانی است",
+            PhoneImeiWriter.QualcommNv550Commands("352921101646918").Any(c => c.Contains("550")) &&
+            PhoneImeiWriter.QualcommNv550Commands("352921101646918").Any(c => c.Contains("QNVRESTART")));
+        var blocked = PhoneImeiWriter.NotPossible(PhoneVendor.Apple, "352921101646918", "350782285315072",
+            PhoneImeiWriter.BuildWriteGuide(PhoneVendor.Apple, "352921101646918"), "ثبت در همتا");
+        check("iOS نوشتن را ممکن اعلام نمی‌کند و دلیل می‌دهد",
+            !blocked.Success && blocked.Outcome == PhoneWriteOutcome.Blocked &&
+            blocked.Verdict.Contains("NV") && blocked.ToText().Contains("قدم بعدی"));
+        var missing = PhoneImeiWriter.MissingTool(PhoneVendor.MediaTek, "352921101646918", "", "Maui Meta", "tools");
+        check("نبود ابزار به‌صورت ToolMissing گزارش می‌شود و موفقیت جعلی نمی‌سازد",
+            missing.Outcome == PhoneWriteOutcome.ToolMissing && !missing.Success);
+
+        // --- خواننده جهانی: ترتیب مسیرها و تجمیع نتیجه ---
+        var attempts = new UniversalIdentity(
+        [
+            new IdentityAttempt("پورت مودم (AT)", "COM7 → OK", true, "352921101646918", "", ""),
+            new IdentityAttempt("ADB / سرویس binder", "مسدود", false, "", "", "")
+        ], "352921101646918", "", "", "", "SM-S918B", "R58N", PhoneVendor.Qualcomm,
+            "IMEI از مسیر «پورت مودم (AT)» خوانده شد.");
+        check("خواننده جهانی مسیر موفق را برمی‌گرداند", attempts.Found && attempts.BestPath.Contains("مودم"));
+        check("گزارش خواننده جهانی همه مسیرها را با برچسب نشان می‌دهد",
+            attempts.ToText().Contains("[موفق]") && attempts.ToText().Contains("[ناموفق]"));
+        var none = attempts with { Imei1 = "", Attempts = [] };
+        check("بدون شناسه، Found منفی است", !none.Found);
     }
 }
