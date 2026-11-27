@@ -220,6 +220,48 @@ internal static class MobileSelfTests
             null, default).GetAwaiter().GetResult();
         check("آیفون بدون Trust با پیام روشن رد می‌شود", !noTrust.FoundAny && noTrust.Verdict.Contains("Trust"));
 
+        // --- برگه یکپارچگی، پشتیبان هویت، دستیار همتا ---
+        var identity = new UniversalIdentity(
+        [
+            new IdentityAttempt("پورت مودم (AT)", "COM7 → IMEI خوانده شد", true, "352921101646918", "", ""),
+            new IdentityAttempt("ADB / سرویس binder", "مسدود در Android 10+", false, "", "", "")
+        ], "352921101646918", "", "", "", "SM-S918B", "R58NABCDEF", PhoneVendor.Qualcomm,
+            "IMEI از مسیر «پورت مودم (AT)» خوانده شد.");
+
+        var certificate = DeviceIdentityCertificate.Build(identity, DateTimeOffset.Parse("2026-11-15T10:00:00Z"));
+        check("برگه هویت شماره سند و TAC معتبر می‌دهد",
+            certificate.DocumentId.StartsWith("XID-") && certificate.TacInfo.Contains("TAC") &&
+            certificate.TacInfo.Contains("Luhn معتبر"));
+        check("برگه هویت مسیر موفق و مسیر ردشده را هر دو ثبت می‌کند",
+            certificate.ReadPath.Contains("مودم") && certificate.PathAudit.Any(line => line.Contains("[ناموفق]")));
+        check("برگه هویت ICCID را ماسک می‌کند", !certificate.ToText().Contains("8998") || certificate.IccidMasked.Length <= 8);
+
+        var missingCertificate = DeviceIdentityCertificate.Build(identity with { Imei1 = "", Attempts = [] },
+            DateTimeOffset.UtcNow);
+        check("بدون IMEI، برگه صریح می‌گوید باید به مرکز رسمی رفت",
+            missingCertificate.Verdict.Contains("بازگردانی رسمی") && missingCertificate.Imei1Status.Contains("خوانده نشد"));
+
+        var invalid = DeviceIdentityCertificate.Build(identity with { Imei1 = "352921101646910" }, DateTimeOffset.UtcNow);
+        check("IMEI با Luhn غلط به‌عنوان مقدار مشکوک علامت می‌خورد",
+            invalid.Imei1Status.Contains("Luhn نامعتبر") || invalid.Verdict.Contains("معتبر"));
+
+        var backup = IdentityBackupPlanner.BuildForAndroid("SM-S918B", "R58NABCDEF");
+        check("پشتیبان هویت پارتیشن‌های EFS و NVRAM را می‌گیرد",
+            backup.Commands.Any(c => c.Contains("efs")) && backup.Commands.Any(c => c.Contains("nvram")) &&
+            backup.Commands.All(c => c.StartsWith("dd if=", StringComparison.Ordinal) || c.Contains("getprop") || c.Contains("ls -l")));
+        check("پشتیبان هویت هشدار می‌دهد پارتیشن دستگاه دیگر را ننویس",
+            backup.RestoreHint.Contains("دستگاه دیگر"));
+
+        var guide = HamtaRegistrationGuide.Build(identity, certificate);
+        check("دستیار همتا IMEI خوانده‌شده را در مدارک می‌گذارد",
+            guide.Documents.Any(d => d.Contains("352921101646918")) &&
+            guide.Documents.Any(d => d.Contains(certificate.DocumentId)));
+        check("دستیار همتا مسیر مسافری را گام‌به‌گام می‌دهد",
+            guide.Scenario.Contains("مسافری") && guide.Steps.Any(s => s.Contains("گمرک")) &&
+            guide.Steps.Any(s => s.Contains("حقوق ورودی")));
+        check("دستیار همتا بدون IMEI، اول خواندن را می‌خواهد",
+            HamtaRegistrationGuide.Build(null, null).Verdict.Contains("خواندن IMEI"));
+
         // --- نوشتن روی گوشی: اعتبارسنجی و مسیرهای بسته ---
         check("IMEI هدف نامعتبر رد می‌شود",
             PhoneImeiWriter.ValidateTarget("352921101646919", "352921101646918").Contains("معتبر نیست"));
