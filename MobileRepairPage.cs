@@ -37,6 +37,7 @@ internal sealed class MobileRepairPage : TabPage
     private readonly Button _identityReport = MakeButton("برگه یکپارچگی هویت");
     private readonly Button _backupIdentity = MakeButton("پشتیبان هویت (EFS/NVRAM)");
     private readonly Button _hamtaGuide = MakeButton("دستیار ثبت در همتا");
+    private readonly Button _recoveryPlan = MakeButton("تشخیص IMEI خالی (برد تعویض‌شده)");
     private readonly TextBox _writeTargetPlain = new()
     {
         Width = 165, RightToLeft = RightToLeft.No, MaxLength = 15, TextAlign = HorizontalAlignment.Center,
@@ -53,6 +54,7 @@ internal sealed class MobileRepairPage : TabPage
     private UniversalIdentity? _universal;
     private PhoneWriteResult? _writeResult;
     private DeviceIdentityCertificate? _identityCertificate;
+    private IdentityRecoveryPlan? _recovery;
     private bool _checkingUsb;
 
     public MobileRepairPage() : base("تعمیرات گوشی")
@@ -69,8 +71,8 @@ internal sealed class MobileRepairPage : TabPage
         var caption = new Label { Text = "عیب‌یابی USB گوشی", AutoSize = true, Font = AppFonts.Ui(14, FontStyle.Bold),
             ForeColor = Color.FromArgb(21, 32, 51) };
         layout.Controls.Add(caption, 0, 0);
-        layout.Controls.Add(Buttons(_scan, _tools, _read, _universalRead, _modemPorts, _modemWrite, _identityReport, _backupIdentity, _hamtaGuide,
-                _cancel, _export, _saveSnapshot, _verifySnapshot), 0, 1);
+        layout.Controls.Add(Buttons(_scan, _tools, _read, _universalRead, _modemPorts, _modemWrite, _identityReport, _recoveryPlan, _backupIdentity,
+                _hamtaGuide, _cancel, _export, _saveSnapshot, _verifySnapshot), 0, 1);
         _devices.AccessibleName = "گوشی متصل";
         layout.Controls.Add(_devices, 0, 2);
         layout.Controls.Add(_status, 0, 3);
@@ -104,6 +106,7 @@ internal sealed class MobileRepairPage : TabPage
         _identityReport.Click += async (_, _) => await BuildIdentityReportAsync();
         _backupIdentity.Click += async (_, _) => await BackupIdentityAsync();
         _hamtaGuide.Click += (_, _) => ShowHamtaGuide();
+        _recoveryPlan.Click += (_, _) => ShowRecoveryPlan();
         _monitor.Tick += async (_, _) => await CheckUsbAsync();
         VisibleChanged += (_, _) => _monitor.Enabled = Visible;
         ShowReport();
@@ -493,6 +496,27 @@ internal sealed class MobileRepairPage : TabPage
         _status.Text = "پشتیبان‌گیری تمام شد؛ فایل‌های EFS/NVRAM را نگه دار.";
     });
 
+    /// <summary>
+    /// سناریوی برد تعویض‌شده: IMEI خالی/Unknown است و IMEI قبلی در همتا ثبت بوده.
+    /// خروجی، مسیر بازگردانی رسمی ناحیه هویت را برای همان چیپست می‌سازد؛ ادعای نوشتن هویتی نمی‌کند.
+    /// </summary>
+    private void ShowRecoveryPlan()
+    {
+        var imei = _universal?.Imei1 ?? ReadImeiFromWriteResult() ?? string.Empty;
+        var chipset = _universal?.Vendor.ToString()
+                      ?? (_devices.SelectedItem as MobileTarget)?.Model ?? "Unknown";
+        var model = _universal?.Model ?? (_devices.SelectedItem as MobileTarget)?.Model ?? string.Empty;
+
+        var plan = IdentityRecoveryPlan.Build(imei, chipset, model, _identityCertificate?.DocumentId ?? string.Empty);
+        _recovery = plan;
+        _report.Text = plan.ToText();
+        _status.Text = plan.Verdict;
+        UpdateButtons();
+    }
+
+    private string? ReadImeiFromWriteResult() =>
+        _writeResult is { ImeiAfter.Length: 15 } result ? result.ImeiAfter : null;
+
     private void ShowHamtaGuide()
     {
         var identity = _universal;
@@ -541,6 +565,7 @@ internal sealed class MobileRepairPage : TabPage
         _identityReport.Enabled = ready && _universal is not null;
         _backupIdentity.Enabled = ready;
         _hamtaGuide.Enabled = ready;
+        _recoveryPlan.Enabled = ready;
         _saveSnapshot.Enabled = ready && _reading?.Fields.Count > 0 && _devices.SelectedItem is MobileTarget { UsbNode: null };
         _verifySnapshot.Enabled = ready;
         var manual = CanEnterImei(_reading);

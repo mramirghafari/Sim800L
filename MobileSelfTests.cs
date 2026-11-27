@@ -220,6 +220,33 @@ internal static class MobileSelfTests
             null, default).GetAwaiter().GetResult();
         check("آیفون بدون Trust با پیام روشن رد می‌شود", !noTrust.FoundAny && noTrust.Verdict.Contains("Trust"));
 
+        // --- برد تعویض‌شده: تشخیص IMEI خالی و مسیر بازگردانی ---
+        check("IMEI سالم به‌عنوان سالم طبقه‌بندی می‌شود",
+            IdentityRecoveryPlan.Classify("352921101646918") == IdentityDamage.Healthy);
+        check("Unknown و صفر و خالی همه «خالی» محسوب می‌شوند",
+            IdentityRecoveryPlan.Classify("") == IdentityDamage.Empty &&
+            IdentityRecoveryPlan.Classify("000000000000000") == IdentityDamage.Empty &&
+            IdentityRecoveryPlan.Classify("unknown") == IdentityDamage.Empty);
+        check("۱۵ رقم با Luhn غلط «خراب» است نه «خالی»",
+            IdentityRecoveryPlan.Classify("352921101646910") == IdentityDamage.Corrupt);
+
+        var recovery = IdentityRecoveryPlan.Build("", "Qualcomm", "SM-S918B", "XID-20261115-00001");
+        check("برد تعویض‌شده: پارتیشن هویت خالی تشخیص داده می‌شود", recovery.Damage == IdentityDamage.Empty);
+        check("مسیر رسمی Qualcomm شامل QCN Restore است",
+            recovery.OfficialPath.Any(step => step.Contains("QCN")));
+        check("مسیر رسمی از نوشتن عدد دلخواه دوری می‌کند",
+            recovery.WhyNotRewrite.Contains("امضا") && recovery.OfficialPath.All(step => !step.Contains("AT+EGMR")));
+        check("مدارک شامل فاکتور تعویض برد و برگه هویت است",
+            recovery.Documents.Any(d => d.Contains("برد")) && recovery.Documents.Any(d => d.Contains("XID-20261115-00001")));
+
+        var deadModem = IdentityRecoveryPlan.Build("", "Unknown", "", "");
+        check("بدون پاسخ مودم، اولویت بازگردانی مودم اعلام می‌شود",
+            deadModem.Verdict.Contains("مودم") && deadModem.IdentifySteps.Any(s => s.Contains("بیس‌بند")));
+
+        var appleRecovery = IdentityRecoveryPlan.Build("", "Apple", "iPhone17,1", "");
+        check("برای آیفون مسیر رسمی اپل ذکر می‌شود",
+            appleRecovery.OfficialPath.Any(step => step.Contains("App")));
+
         // --- برگه یکپارچگی، پشتیبان هویت، دستیار همتا ---
         var identity = new UniversalIdentity(
         [
