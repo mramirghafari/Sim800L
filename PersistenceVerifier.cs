@@ -75,7 +75,7 @@ internal sealed class PersistenceVerifier
     public async Task<PersistenceResult> VerifyMultiCycleAsync(
         string target,
         int cycles = 3,
-        Func<bool>? waitForManualCycle = null,
+        Action? waitForManualCycle = null,
         IProgress<string>? progress = null,
         CancellationToken ct = default)
     {

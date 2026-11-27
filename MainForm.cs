@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.IO.Ports;
+using System.Text;
 
 namespace SIM800L_Flasher;
 
@@ -146,6 +147,7 @@ internal sealed class MainForm : Form
         _tabs.RightToLeft = RightToLeft.Yes;
         _tabs.RightToLeftLayout = true;
         _tabs.TabPages.Add(BuildDashboard());
+        _tabs.TabPages.Add(new MobileRepairPage());
         _tabs.TabPages.Add(BuildTerminal());
         _tabs.TabPages.Add(BuildFlasher());
         _imeiPage = BuildImeiLab();
@@ -1313,7 +1315,7 @@ internal sealed class MainForm : Form
             AppendSimLab(string.Empty);
             AppendSimLab(SimFileAccess.Explain(access, probe));
 
-            if (access == SimFileAccess.UpdateOk)
+            if (access == SimWriteAccess.UpdateOk)
             {
                 _simLabVerdict.ForeColor = Color.FromArgb(0, 130, 110);
                 _simLabVerdict.Text = "کارت اجازه UPDATE داد. اما توجه: این فیلد در شبکه نقشی ندارد؛ هویت واقعی از سخت‌افزار می‌آید.";
@@ -1370,10 +1372,10 @@ internal sealed class MainForm : Form
             MessageBox.Show(this, "ابتدا قفل نوشتن را باز کنید.", "قفل است", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        if (!_targetImei.HasValue)
+        if (_targetImei is null)
         {
             ValidateImeiInput();
-            if (!_targetImei.HasValue)
+            if (_targetImei is null)
             {
                 MessageBox.Show(this, "IMEI هدف معتبر نیست.", "IMEI", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
@@ -1387,7 +1389,7 @@ internal sealed class MainForm : Form
             "تلاش مجدد با ری‌استارت", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
         if (confirm != DialogResult.Yes) return;
 
-        var target = _targetImei!.Value.Value;
+        var target = _targetImei.Value;
         try
         {
             SetBusy(true);
@@ -3094,7 +3096,32 @@ internal sealed class MainForm : Form
     private bool EnsureConnected()
     {
         if (_device.IsOpen) return true;
-        MessageBox.Show(this, "ابتدا به ماژول متصل شوید.", "اتصال لازم است", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+        SetConnection(false);
+        var portName = _ports.SelectedItem?.ToString();
+        var baudText = _baud.SelectedItem?.ToString();
+        if (!string.IsNullOrWhiteSpace(portName) && int.TryParse(baudText, out var baudRate))
+        {
+            try
+            {
+                _device.Open(portName, baudRate);
+                SetConnection(true);
+                _activity.Text = $"اتصال {portName} با سرعت {baudRate} دوباره برقرار شد.";
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _device.Close();
+                SetConnection(false);
+                MessageBox.Show(this,
+                    $"ارتباط قبلی با {portName} بسته شده بود و اتصال دوباره ناموفق بود.\r\n\r\n{ex.Message}",
+                    "بازیابی اتصال ناموفق", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+        }
+
+        MessageBox.Show(this, "ابتدا پورت COM و سرعت ارتباط را انتخاب و به ماژول متصل شوید.",
+            "اتصال لازم است", MessageBoxButtons.OK, MessageBoxIcon.Information);
         return false;
     }
 

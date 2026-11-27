@@ -2,7 +2,7 @@ using System.Text;
 
 namespace SIM800L_Flasher;
 
-internal enum SimFileAccess { ReadOk, UpdateOk, AdminRequired, NotFound, Rejected }
+internal enum SimWriteAccess { ReadOk, UpdateOk, AdminRequired, NotFound, Rejected }
 
 internal sealed record SimApduResult(string Command, int Sw1, int Sw2, string Data)
 {
@@ -163,24 +163,24 @@ internal sealed class SimFileAccess
     }
 
     /// <summary>تفسیر وضعیت یک آزمون نوشتن روی فیلد IMEI.</summary>
-    public static SimFileAccess ClassifyWrite(SimApduResult result)
+    public static SimWriteAccess ClassifyWrite(SimApduResult result)
     {
-        if (result.IsSuccess) return SimFileAccess.UpdateOk;
-        if (result.Sw1 == 0x69 && result.Sw2 == 0x82) return SimFileAccess.AdminRequired;
-        if (result.Sw1 == 0x98) return SimFileAccess.AdminRequired;
-        if (result.Sw1 == 0x94) return SimFileAccess.NotFound;
-        return SimFileAccess.Rejected;
+        if (result.IsSuccess) return SimWriteAccess.UpdateOk;
+        if (result.Sw1 == 0x69 && result.Sw2 == 0x82) return SimWriteAccess.AdminRequired;
+        if (result.Sw1 == 0x98) return SimWriteAccess.AdminRequired;
+        if (result.Sw1 == 0x94) return SimWriteAccess.NotFound;
+        return SimWriteAccess.Rejected;
     }
 
-    public static string Explain(SimFileAccess access, SimApduResult? result = null) => access switch
+    public static string Explain(SimWriteAccess access, SimApduResult? result = null) => access switch
     {
-        SimFileAccess.UpdateOk =>
+        SimWriteAccess.UpdateOk =>
             "کارت اجازه UPDATE داد. توجه: این فیلد در استاندارد GSM فقط «کپی گزارش‌شده IMEI» است و " +
             "هویت واقعی روی شبکه از خود ماژول/گوشی می‌آید؛ پس نوشتن آن تضمینی برای تغییر IMEI در شبکه نیست.",
-        SimFileAccess.AdminRequired =>
+        SimWriteAccess.AdminRequired =>
             "کارت اجازه نوشتن نداد (شرط امنیتی ADM). این فیلد توسط اپراتور در مرحله شخصی‌سازی با کلید ADM " +
             "قفل می‌شود و از طریق AT/SIM800L قابل نوشتن نیست. هیچ نرم‌افزاری بدون کلید ADM آن اپراتور نمی‌تواند این کار را انجام دهد.",
-        SimFileAccess.NotFound =>
+        SimWriteAccess.NotFound =>
             "فایل موردنظر روی این کارت وجود ندارد (SIM قدیمی یا eUICC).",
         _ =>
             $"کارت درخواست را رد کرد — {(result is null ? "بدون جزئیات" : result.StatusName)}."
