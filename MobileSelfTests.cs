@@ -220,6 +220,34 @@ internal static class MobileSelfTests
             null, default).GetAwaiter().GetResult();
         check("آیفون بدون Trust با پیام روشن رد می‌شود", !noTrust.FoundAny && noTrust.Verdict.Contains("Trust"));
 
+        // --- آیفون بدون IMEI: تفکیک مودم غایب / هویت خالی / فعال‌نشده ---
+        AppleIdentityResult Apple(string baseband, string imei, string activation) => new(
+            "00008110-001A2B3C44556677", "iPhone17,1", "18.0", imei, "", "", "", "F4GW", baseband, activation,
+            [], "");
+
+        var noBaseband = AppleBasebandDiagnosis.Build(Apple("", "", "Unactivated"), "iPhone 17 Pro Max", "18.0");
+        check("آیفون با بیس‌باند خالی «مودم غایب» تشخیص داده می‌شود",
+            noBaseband.State == AppleIdentityState.BasebandMissing);
+        check("مودم غایب صریحاً می‌گوید نوشتن IMEI ممکن نیست",
+            noBaseband.CanImeiBeWritten.StartsWith("خیر") && noBaseband.CanImeiBeWritten.Contains("Secure Enclave"));
+        check("مسیر تعمیر مودم غایب، نمایندگی اپل/برد جفت‌شده است",
+            noBaseband.RepairPath.Contains("اپل"));
+
+        var emptyIdentity = AppleBasebandDiagnosis.Build(Apple("2.70.01", "", "Activated"), "iPhone 17 Pro Max", "18.0");
+        check("مودم حاضر + IMEI خالی = هویت خالی، نه مودم غایب",
+            emptyIdentity.State == AppleIdentityState.EmptyIdentity);
+
+        var notActivated = AppleBasebandDiagnosis.Build(Apple("2.70.01", "352921101646918", "Unactivated"), "iPhone", "18.0");
+        check("IMEI سالم ولی فعال‌نشده، مشکل IMEI شمرده نمی‌شود",
+            notActivated.State == AppleIdentityState.NotActivated && notActivated.CanImeiBeWritten.Contains("لازم نیست"));
+
+        var readyApple = AppleBasebandDiagnosis.Build(Apple("2.70.01", "352921101646918", "Activated"), "iPhone", "18.0");
+        check("آیفون سالم به‌عنوان Ready طبقه‌بندی می‌شود", readyApple.State == AppleIdentityState.Ready);
+        check("نبود اتصال، تشخیص را نامشخص نگه می‌دارد",
+            AppleBasebandDiagnosis.Build(null, "iPhone", "").State == AppleIdentityState.Indeterminate);
+        check("گزارش آیفون هر سه بخش چک/مسیر/امکان نوشتن را دارد",
+            noBaseband.ToText().Contains("چه چیزی را چک کن") && noBaseband.ToText().Contains("آیا می‌شود IMEI نوشت"));
+
         // --- برد تعویض‌شده: تشخیص IMEI خالی و مسیر بازگردانی ---
         check("IMEI سالم به‌عنوان سالم طبقه‌بندی می‌شود",
             IdentityRecoveryPlan.Classify("352921101646918") == IdentityDamage.Healthy);

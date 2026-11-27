@@ -38,6 +38,7 @@ internal sealed class MobileRepairPage : TabPage
     private readonly Button _backupIdentity = MakeButton("پشتیبان هویت (EFS/NVRAM)");
     private readonly Button _hamtaGuide = MakeButton("دستیار ثبت در همتا");
     private readonly Button _recoveryPlan = MakeButton("تشخیص IMEI خالی (برد تعویض‌شده)");
+    private readonly Button _appleDiagnosis = MakeButton("تشخیص آیفون بدون IMEI");
     private readonly TextBox _writeTargetPlain = new()
     {
         Width = 165, RightToLeft = RightToLeft.No, MaxLength = 15, TextAlign = HorizontalAlignment.Center,
@@ -55,6 +56,7 @@ internal sealed class MobileRepairPage : TabPage
     private PhoneWriteResult? _writeResult;
     private DeviceIdentityCertificate? _identityCertificate;
     private IdentityRecoveryPlan? _recovery;
+    private AppleBasebandDiagnosis? _appleState;
     private bool _checkingUsb;
 
     public MobileRepairPage() : base("تعمیرات گوشی")
@@ -71,7 +73,7 @@ internal sealed class MobileRepairPage : TabPage
         var caption = new Label { Text = "عیب‌یابی USB گوشی", AutoSize = true, Font = AppFonts.Ui(14, FontStyle.Bold),
             ForeColor = Color.FromArgb(21, 32, 51) };
         layout.Controls.Add(caption, 0, 0);
-        layout.Controls.Add(Buttons(_scan, _tools, _read, _universalRead, _modemPorts, _modemWrite, _identityReport, _recoveryPlan, _backupIdentity,
+        layout.Controls.Add(Buttons(_scan, _tools, _read, _universalRead, _modemPorts, _modemWrite, _identityReport, _recoveryPlan, _appleDiagnosis, _backupIdentity,
                 _hamtaGuide, _cancel, _export, _saveSnapshot, _verifySnapshot), 0, 1);
         _devices.AccessibleName = "گوشی متصل";
         layout.Controls.Add(_devices, 0, 2);
@@ -107,6 +109,7 @@ internal sealed class MobileRepairPage : TabPage
         _backupIdentity.Click += async (_, _) => await BackupIdentityAsync();
         _hamtaGuide.Click += (_, _) => ShowHamtaGuide();
         _recoveryPlan.Click += (_, _) => ShowRecoveryPlan();
+        _appleDiagnosis.Click += async (_, _) => await ShowAppleDiagnosisAsync();
         _monitor.Tick += async (_, _) => await CheckUsbAsync();
         VisibleChanged += (_, _) => _monitor.Enabled = Visible;
         ShowReport();
@@ -500,6 +503,32 @@ internal sealed class MobileRepairPage : TabPage
     /// سناریوی برد تعویض‌شده: IMEI خالی/Unknown است و IMEI قبلی در همتا ثبت بوده.
     /// خروجی، مسیر بازگردانی رسمی ناحیه هویت را برای همان چیپست می‌سازد؛ ادعای نوشتن هویتی نمی‌کند.
     /// </summary>
+    /// <summary>
+    /// آیفون بدون IMEI: تفکیک «مودم غایب» از «هویت خالی» از «فعال‌نشده». بدون این تفکیک،
+    /// تعمیرگاه سراغ نوشتن IMEI می‌رود که روی iOS اصلاً وجود ندارد.
+    /// </summary>
+    private async Task ShowAppleDiagnosisAsync()
+    {
+        var idevice = FindToolPath("ideviceinfo.exe");
+        AppleIdentityResult? identity = null;
+        if (idevice is not null)
+        {
+            var udid = (_devices.SelectedItem as MobileTarget) is { Protocol: MobileDiagnostics.Apple } apple ? apple.Id : null;
+            identity = await AppleIdentityProbe.ReadAsync(idevice, MobileDiagnostics.RunToolAsync, udid);
+        }
+
+        var model = identity?.Model ?? (_devices.SelectedItem as MobileTarget)?.Model ?? "iPhone";
+        var diagnosis = AppleBasebandDiagnosis.Build(identity, model, identity?.IosVersion ?? string.Empty);
+        _appleState = diagnosis;
+        _report.Text = identity is null
+            ? diagnosis.ToText() + Environment.NewLine + Environment.NewLine +
+              "نکته: ideviceinfo.exe پیدا نشد. با نصب Apple Devices و ابزارهای libimobiledevice، تشخیص کامل می‌شود."
+            : diagnosis.ToText() + Environment.NewLine + Environment.NewLine + "رد خواندن:" + Environment.NewLine +
+              string.Join(Environment.NewLine, identity.Trail.Select(line => "  • " + line));
+        _status.Text = diagnosis.Verdict;
+        UpdateButtons();
+    }
+
     private void ShowRecoveryPlan()
     {
         var imei = _universal?.Imei1 ?? ReadImeiFromWriteResult() ?? string.Empty;
@@ -566,6 +595,7 @@ internal sealed class MobileRepairPage : TabPage
         _backupIdentity.Enabled = ready;
         _hamtaGuide.Enabled = ready;
         _recoveryPlan.Enabled = ready;
+        _appleDiagnosis.Enabled = ready;
         _saveSnapshot.Enabled = ready && _reading?.Fields.Count > 0 && _devices.SelectedItem is MobileTarget { UsbNode: null };
         _verifySnapshot.Enabled = ready;
         var manual = CanEnterImei(_reading);

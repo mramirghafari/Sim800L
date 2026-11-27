@@ -22,10 +22,22 @@ internal sealed record AppleIdentityResult(
     string Eid,
     string Iccid,
     string Serial,
+    string Baseband,
+    string ActivationState,
     IReadOnlyList<string> Trail,
     string Verdict)
 {
     public bool FoundAny => Imei1.Length == 15 || Imei2.Length == 15;
+
+    /// <summary>
+    /// بیس‌باند غایب یعنی سخت‌افزار مودم شناسایی نشده (برد تعویض‌شده یا CP آسیب‌دیده)؛
+    /// در این حالت هیچ IMEI‌ای وجود ندارد که نوشته یا خوانده شود.
+    /// </summary>
+    public bool BasebandMissing =>
+        Baseband.Length == 0 ||
+        Baseband.Contains("unknown", StringComparison.OrdinalIgnoreCase) ||
+        Baseband.Contains("not", StringComparison.OrdinalIgnoreCase) ||
+        Baseband == "0";
 }
 
 internal static class AppleIdentityProbe
@@ -40,7 +52,9 @@ internal static class AppleIdentityProbe
         ("MobileEquipmentIdentifier", "MEID"),
         ("SerialNumber", "سریال"),
         ("ProductType", "مدل"),
-        ("ProductVersion", "نسخه iOS")
+        ("ProductVersion", "نسخه iOS"),
+        ("BasebandVersion", "بیس‌بند"),
+        ("ActivationState", "وضعیت فعال‌سازی")
     ];
 
     public static async Task<AppleIdentityResult> ReadAsync(
@@ -51,13 +65,15 @@ internal static class AppleIdentityProbe
     {
         var trail = new List<string>();
         string Imei1 = "", Imei2 = "", Eid = "", Iccid = "", Serial = "", Model = "", Version = "";
+        var baseband = "";
+        var activation = "";
         var udids = udid is null ? await ListDevicesAsync(run, token) : [udid];
 
         if (udids.Count == 0)
-            return new("-", "", "", "", "", "", "", "", trail,
+            return new("-", "", "", "", "", "", "", "", "", "", "", trail,
                 "دستگاه اپل در USB دیده نشد. کابل دیتا، باز بودن قفل صفحه و تأیید Trust لازم است.");
         if (udids.Count > 1 && udid is null)
-            return new(udids[0], "", "", "", "", "", "", "", trail,
+            return new(udids[0], "", "", "", "", "", "", "", "", "", "", trail,
                 "چند دستگاه اپل وصل است. در فهرست یکی را انتخاب کن تا IMEI همان خوانده شود.");
 
         var target = udids[0];
@@ -79,6 +95,8 @@ internal static class AppleIdentityProbe
                 case "SerialNumber": Serial = value; break;
                 case "ProductType": Model = value; break;
                 case "ProductVersion": Version = value; break;
+                case "BasebandVersion": baseband = value; break;
+                case "ActivationState": activation = value; break;
             }
         }
 
@@ -90,7 +108,7 @@ internal static class AppleIdentityProbe
                 : "lockdownd مقدار IMEI را نداد. اگر آیفون در حالت Diagnostics است، صفحه Information سریال/IMEI را نشان می‌دهد؛ همان را دستی وارد کن.";
 
         return new(target, Model, Version, Imei1, Imei2.Length == 15 ? Imei2 : string.Empty,
-            Eid, Iccid, Serial, trail, verdict);
+            Eid, Iccid, Serial, baseband, activation, trail, verdict);
     }
 
     private static async Task<List<string>> ListDevicesAsync(
